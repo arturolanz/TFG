@@ -1,0 +1,14 @@
+# Python
+__pycache__/
+*.py[cod]
+
+# Entornos virtuales
+venv/
+env/
+
+# Datos y Modelos (pueden ser muy grandes para GitHub)
+data/*.pgn
+models/checkpoint/
+
+# Sistema
+.DS_Store
