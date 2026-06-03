@@ -124,3 +124,23 @@ def dibujar_barra_estado(pantalla, texto_apertura):
     texto_rect = superficie_texto.get_rect(center=(ANCHO // 2, ALTO + 20))
     
     pantalla.blit(superficie_texto, texto_rect)
+
+def resaltar_guia_teorica(pantalla, movimiento_guia):
+    """
+    Dibuja un indicador visual azul en el tablero para sugerirle al 
+    usuario el siguiente movimiento para completar la apertura elegida.
+    """
+    if movimiento_guia is not None:
+        # Extraemos las casillas de origen y destino del movimiento chess.Move
+        casilla_origen = movimiento_guia.from_square
+        casilla_destino = movimiento_guia.to_square
+        
+        # Convertimos las casillas de la librería (0-63) a coordenadas X, Y de la pantalla
+        # python-chess cuenta desde abajo a la izquierda, Pygame desde arriba a la izquierda
+        for casilla, color in [(casilla_origen, (0, 191, 255)), (casilla_destino, (30, 144, 255))]:
+            fila = 7 - (casilla // 8)
+            columna = casilla % 8
+            
+            # Dibujamos un rectángulo con un borde grueso (4px) alrededor de las casillas sugeridas
+            rectangulo = pygame.Rect(columna * TAM_CASILLA, fila * TAM_CASILLA, TAM_CASILLA, TAM_CASILLA)
+            pygame.draw.rect(pantalla, color, rectangulo, 4)

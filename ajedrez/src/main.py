@@ -13,6 +13,16 @@ def main():
     
     # Instanciamos nuestras dos herramientas separadas: el cerebro y los ojos
     motor = ChessEngine()
+
+    # Definimos la variable vacía para que no dé error si no estamos entrenando nada
+    apertura_a_entrenar = ""
+
+    # Define aquí qué apertura quieres construir en el tablero paso a paso
+    #apertura_a_entrenar = "Siciliana: Variante Dragón"
+
+    # Descomentar esta línea para arrancar directamente en la variante que quieras auditar:
+    #motor.forzar_inicio_teorico("Siciliana: Variante Dragón")
+
     interfaz.cargar_imagenes()
     
     corriendo = True
@@ -60,7 +70,7 @@ def main():
             # --- EVENTOS DE TECLADO --- #
             elif e.type == pygame.KEYDOWN:
                 # Si pulsamos la tecla 'R' Y la partida ha terminado
-                if e.key == pygame.K_r and partida_finalizada:
+                if e.key == pygame.K_r:
                     # 1. Reiniciamos la lógica del motor
                     motor.reiniciar_juego()
                     
@@ -107,7 +117,7 @@ def main():
             pygame.time.delay(10) 
             
             # 2. Ahora sí, la IA bloquea el hilo para calcular, pero el tablero ya está actualizado
-            motor.hacer_movimiento_inteligente() 
+            motor.hacer_movimiento_inteligente(apertura_a_entrenar) 
             
             casilla_seleccionada = ()
             casilla_sq_seleccionada = None
@@ -118,6 +128,12 @@ def main():
         # 3. RENDERIZADO VISUAL (Se ejecuta en cada frame)
         interfaz.dibujar_tablero(pantalla)
         interfaz.resaltar_casillas(pantalla, casilla_seleccionada, movimientos_validos)
+        interfaz.dibujar_piezas(pantalla, motor.board)
+
+        # NUEVO: Calculamos si toca sugerir un movimiento para la apertura elegida y lo pintamos
+        mov_sugerido = motor.obtener_siguiente_movimiento_guia(apertura_a_entrenar)
+        interfaz.resaltar_guia_teorica(pantalla, mov_sugerido)
+
         interfaz.dibujar_piezas(pantalla, motor.board)
 
         # NUEVO: Obtenemos el nombre detectado por el motor y lo dibujamos abajo
