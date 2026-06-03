@@ -1,185 +1,126 @@
 import pygame
 import chess
 
-# Configuración
-ANCHO = ALTO = 512 # 8 casillas por 64 pixeles
-DIMENSION = 8
+# --- Configuración General ---
+ANCHO = ALTO = 512       # Tamaño de la ventana (8 casillas por 64 pixeles)
+DIMENSION = 8            # Un tablero de ajedrez tiene 8x8 casillas
 TAM_CASILLA = ALTO // DIMENSION
-MAX_FPS = 15
-PIEZAS = {}
+MAX_FPS = 15             # No necesitamos muchos FPS para el ajedrez
+PIEZAS = {}              # Diccionario para guardar las imágenes cargadas en memoria
 
 def cargar_imagenes():
-    """Carga las imágenes de las piezas en un diccionario."""
+    """Carga las imágenes de las piezas desde la carpeta 'images' a un diccionario."""
     piezas = ['wp', 'wr', 'wn', 'wb', 'wq', 'wk', 'bp', 'br', 'bn', 'bb', 'bq', 'bk']
-    escala = 0.95 # Para que la pieza ocupe el 95% de la casilla
+    escala = 0.95 # Para que la pieza ocupe el 95% de la casilla y no se vea apretada
     tam_pieza = int(TAM_CASILLA * escala)
+    
     for pieza in piezas:
-        # Cargamos la imagen desde tu carpeta 'images'
+        # Cargamos la imagen y la escalamos para que encaje perfectamente
         imagen = pygame.image.load("images/" + pieza + ".png")
-        # La escalamos para que encaje perfectamente en la casilla
         PIEZAS[pieza] = pygame.transform.scale(imagen, (tam_pieza, tam_pieza))
 
 def dibujar_tablero(pantalla):
-    """Dibuja los cuadros del tablero."""
+    """Dibuja el patrón cuadriculado del tablero (blanco y gris)."""
     colores = [pygame.Color("white"), pygame.Color("gray")]
     for f in range(DIMENSION):
         for c in range(DIMENSION):
             color = colores[((f + c) % 2)]
             pygame.draw.rect(pantalla, color, pygame.Rect(c*TAM_CASILLA, f*TAM_CASILLA, TAM_CASILLA, TAM_CASILLA))
 
-def dibujar_piezas(pantalla, tablero):
-    """Dibuja las piezas sobre el tablero basándose en el estado de python-chess."""
-    # Calculamos cuánto espacio sobra para centrar la pieza
-    # Si la casilla mide 64 y la pieza 58, sobran 6px. El centro es moverla 3px.
+def dibujar_piezas(pantalla, board):
+    """
+    Dibuja las piezas sobre el tablero basándose en el estado del motor (board).
+    """
+    # Calculamos cuánto espacio sobra para centrar la pieza en su casilla
     offset = (TAM_CASILLA - PIEZAS['wp'].get_width()) // 2
     
     for f in range(DIMENSION):
         for c in range(DIMENSION):
-            # IMPORTANTE: python-chess cuenta desde abajo, pygame desde arriba
-            # Usamos chess.square(columna, fila)
+            # IMPORTANTE: python-chess cuenta desde abajo (fila 0 = abajo), 
+            # pero pygame dibuja desde arriba (fila 0 = arriba).
+            # Por eso invertimos la fila restando: 7 - f
             casilla = chess.square(c, 7 - f)
-            pieza = tablero.piece_at(casilla)
+            pieza = board.piece_at(casilla) 
             
             if pieza is not None:
-                # Determinamos el nombre del archivo (ej: 'wp', 'bn')
+                # Determinamos el nombre del archivo (ej: 'w' + 'p' = 'wp' para peón blanco)
                 color = 'w' if pieza.color == chess.WHITE else 'b'
                 tipo = pieza.symbol().lower()
                 nombre_pieza = color + tipo
                 
-                #Dibujamos sumando el offset en X e Y
-                pantalla.blit(PIEZAS[nombre_pieza], 
-                              (c*TAM_CASILLA + offset, f*TAM_CASILLA + offset))
+                # Dibujamos la pieza sumando el offset en X e Y para centrarla
+                pantalla.blit(PIEZAS[nombre_pieza], (c*TAM_CASILLA + offset, f*TAM_CASILLA + offset))
 
-def resaltar_casillas(pantalla, tablero, casilla_sel, movimientos_validos):
-    """Resalta la selección, los movimientos posibles y el hover del ratón."""
-    # 1. Resaltar casilla seleccionada (Amarillo suave)
+def resaltar_casillas(pantalla, casilla_sel, movimientos_validos):
+    """Resalta la casilla clickeada, los movimientos posibles (puntos) y el ratón (hover)."""
+    
+    # 1. Resaltar casilla seleccionada (Cuadrado amarillo transparente)
     if casilla_sel:
         f, c = casilla_sel
         s = pygame.Surface((TAM_CASILLA, TAM_CASILLA))
-        s.set_alpha(100) # Transparencia
+        s.set_alpha(100) # 100 de transparencia
         s.fill(pygame.Color("yellow"))
         pantalla.blit(s, (c * TAM_CASILLA, f * TAM_CASILLA))
 
-        # 2. Resaltar movimientos posibles (Puntos o círculos verdes)
+        # 2. Resaltar movimientos posibles para esa pieza (Círculos azules)
         for mov in movimientos_validos:
-            # Convertimos el destino del movimiento a coordenadas (f, c)
             destino = mov.to_square
             col_dest = chess.square_file(destino)
-            fil_dest = 7 - chess.square_rank(destino)
-                
-            pygame.draw.circle(pantalla, pygame.Color("blue"), 
-                            (col_dest * TAM_CASILLA + TAM_CASILLA//2, 
-                                fil_dest * TAM_CASILLA + TAM_CASILLA//2), 8)
+            fil_dest = 7 - chess.square_rank(destino) # Invertimos para pygame
+            
+            # Dibujamos el círculo justo en el centro de la casilla destino
+            centro_x = col_dest * TAM_CASILLA + TAM_CASILLA//2
+            centro_y = fil_dest * TAM_CASILLA + TAM_CASILLA//2
+            pygame.draw.circle(pantalla, pygame.Color("blue"), (centro_x, centro_y), 8)
 
-    # 3. Iluminar casilla bajo el ratón (Hover)
+    # 3. Iluminar casilla bajo el ratón (Hover en azul suave)
     x, y = pygame.mouse.get_pos()
     c, f = x // TAM_CASILLA, y // TAM_CASILLA
-    # Solo iluminamos si es una casilla lógica del tablero
+    # Solo iluminamos si el ratón está dentro de los límites lógicos del tablero
     if 0 <= c < 8 and 0 <= f < 8:
         s = pygame.Surface((TAM_CASILLA, TAM_CASILLA))
         s.set_alpha(50)
         s.fill(pygame.Color("blue"))
         pantalla.blit(s, (c * TAM_CASILLA, f * TAM_CASILLA))
 
+def mostrar_mensaje_final(pantalla, texto):
+    """
+    Dibuja un cartel rectangular semi-transparente con el resultado
+    y las instrucciones para reiniciar.
+    """
+    # 1. Hacemos el banner un poco más alto (120px) para que quepan dos líneas
+    banner = pygame.Surface((ANCHO, 120))
+    banner.set_alpha(200) 
+    banner.fill(pygame.Color("black"))
+    pantalla.blit(banner, (0, ALTO // 2 - 60))
 
-def main():
-    pygame.init()
-    pantalla = pygame.display.set_mode((ANCHO, ALTO))
-    pygame.display.set_caption("Mi Motor de Ajedrez - TFG")
-    reloj = pygame.time.Clock()
+    pygame.font.init()
     
-    # Inicializamos el tablero de la lógica y cargamos las fotos
-    tablero = chess.Board()
-    cargar_imagenes()
+    # 2. Texto principal (El resultado)
+    fuente_principal = pygame.font.SysFont("Arial", 28, bold=True)
+    superficie_texto = fuente_principal.render(texto, True, pygame.Color("white"))
+    texto_rect = superficie_texto.get_rect(center=(ANCHO // 2, ALTO // 2 - 15))
+    pantalla.blit(superficie_texto, texto_rect)
+
+    # 3. Texto secundario (Instrucciones de reinicio)
+    fuente_secundaria = pygame.font.SysFont("Arial", 18)
+    superficie_reinicio = fuente_secundaria.render("Pulsa 'R' para reiniciar", True, pygame.Color("lightgray"))
+    reinicio_rect = superficie_reinicio.get_rect(center=(ANCHO // 2, ALTO // 2 + 25))
+    pantalla.blit(superficie_reinicio, reinicio_rect)
+
+def dibujar_barra_estado(pantalla, texto_apertura):
+    """
+    Dibuja una franja informativa en la parte inferior de la ventana
+    para renderizar la apertura o fase de juego actual.
+    """
+    # Pintamos un rectángulo de fondo gris oscuro justo debajo del tablero (en la coordenada Y = 512)
+    pygame.draw.rect(pantalla, pygame.Color("darkslategray"), pygame.Rect(0, ALTO, ANCHO, 40))
     
-    corriendo = True
-    casilla_seleccionada = () # Guarda el último click del usuario (fila, col)
-    clics_jugador = [] # Guarda dos clicks: [(origen), (destino)]
-    movimientos_validos = [] # Nueva lista para los puntos verdes
-    while corriendo:
-        for e in pygame.event.get():
-            if e.type == pygame.QUIT:
-                corriendo = False
-            
-            elif e.type == pygame.MOUSEBUTTONDOWN:
-                ubicacion = pygame.mouse.get_pos()
-                col = ubicacion[0] // TAM_CASILLA
-                fil = ubicacion[1] // TAM_CASILLA
-
-                #LÓGICA DE SELECCIÓN INTELIGENTE
-                casilla_sq = chess.square(col, 7-fil)
-                pieza = tablero.piece_at(casilla_sq)
-
-                #Si ya hay una selección y hacemos clic en otra pieza del MISMO COLOR
-
-                if pieza and pieza.color == tablero.turn:
-                    casilla_seleccionada = (fil, col)
-                    clics_jugador = [casilla_seleccionada]
-                    # Actualizamos movimientos posibles para esta nueva pieza
-                    movimientos_validos = [m for m in tablero.legal_moves if m.from_square == casilla_sq]
-                
-                # Si es el segundo clic (posible movimiento)
-                elif len(clics_jugador) == 1:
-                    origen = chess.square(clics_jugador[0][1], 7 - clics_jugador[0][0])
-                    destino = chess.square(col, 7 - fil)
-                    movimiento = chess.Move(origen, destino)
-                    
-                    if movimiento in tablero.legal_moves:
-                        tablero.push(movimiento)
-                        casilla_seleccionada = ()
-                        clics_jugador = []
-                        movimientos_validos = []
-                    else:
-                        # Si no es legal y no es pieza propia, limpiamos
-                        casilla_seleccionada = ()
-                        clics_jugador = []
-                        movimientos_validos = []
-                else:
-                    # Primer clic en vacío o pieza enemiga (no hace nada)
-                    pass
-
-                # #Si el usuario hace click dos veces en la misma casilla, deseleccionamos
-
-                # if casilla_seleccionada == (fil,col):
-                #     casilla_seleccionada = ()
-                #     clics_jugador = []
-
-                # else:
-                #     casilla_seleccionada = (fil, col)
-                #     clics_jugador.append(casilla_seleccionada)
-                
-                # #Cuando tenemos dos clicks, intentamos el movimiento
-                # if len(clics_jugador) == 2:
-                #     # Convertimos coordenadas de Pygame a formato ajedrez (0-63)
-                #     origen = chess.square(clics_jugador[0][1], 7 - clics_jugador[0][0])
-                #     destino = chess.square(clics_jugador[1][1], 7 - clics_jugador[1][0])
-
-                #     movimiento = chess.Move(origen, destino)
-
-                #     # Verificamos si es un movimiento legal
-                #     if movimiento in tablero.legal_moves:
-                #         tablero.push(movimiento)
-                #         print(f"Movimiento realizado: {movimiento}")
-                #     else:
-                #         print("Movimiento ilegal")
-
-                #     # Limpiamos para la siguiente jugada
-                #     casilla_seleccionada = ()
-                #     clics_jugador = []
-
-        # 1. Dibujamos el fondo (cuadros)
-        dibujar_tablero(pantalla)
-        
-        #LLAMADA IMPORTANTE: Resaltar antes de las piezas para que quedan debajo
-        resaltar_casillas(pantalla,tablero,casilla_seleccionada,movimientos_validos)
-        
-        # 2. Dibujamos las piezas encima
-        dibujar_piezas(pantalla, tablero)
-        
-        pygame.display.flip()
-        reloj.tick(MAX_FPS)
-
-    pygame.quit()
-
-if __name__ == "__main__":
-    main()
+    pygame.font.init()
+    fuente = pygame.font.SysFont("Arial", 15, bold=True)
+    
+    # Renderizamos el texto informativo en color blanco
+    superficie_texto = fuente.render(f"Teoría: {texto_apertura}", True, pygame.Color("white"))
+    texto_rect = superficie_texto.get_rect(center=(ANCHO // 2, ALTO + 20))
+    
+    pantalla.blit(superficie_texto, texto_rect)
