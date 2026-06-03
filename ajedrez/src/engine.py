@@ -1,6 +1,8 @@
+import os
 import chess
 import random
 import chess.polyglot
+import json
 
 class ChessEngine:
     """
@@ -9,9 +11,26 @@ class ChessEngine:
     No sabe nada de pantallas ni ratones, solo de lógica pura.
     """
     def __init__(self):
-        # Creamos una instancia del tablero.
-        # Al nacer, el objeto ya conoce la posición inicial de todas las piezas y de quién es el turno.
         self.board = chess.Board()
+        
+        # Detectamos dinámicamente la raíz del proyecto para evitar el FileNotFoundError
+        ruta_src = os.path.dirname(os.path.abspath(__file__)) # C:\ProyectoTFG\ajedrez\src
+        ruta_raiz = os.path.dirname(ruta_src)                 # C:\ProyectoTFG\ajedrez
+        
+        self.ruta_json = os.path.join(ruta_raiz, "data", "aperturas.json")
+        self.ruta_bin = os.path.join(ruta_raiz, "data", "aperturas.bin")
+        
+        self.diccionario_aperturas = {}
+        self._cargar_base_aperturas()
+
+    def _cargar_base_aperturas(self):
+        """Carga el archivo JSON con control de errores explícito en consola."""
+        try:
+            with open(self.ruta_json, "r", encoding="utf-8") as f:
+                self.diccionario_aperturas = json.load(f)
+        except FileNotFoundError:
+            print(f"\n[ERROR CRÍTICO]: No se encontró el archivo en: {self.ruta_json}")
+            self.diccionario_aperturas = {}
 
     def turno_actual(self):
         """Devuelve el color del jugador que tiene el turno (True para Blancas, False para Negras)."""
@@ -233,22 +252,21 @@ class ChessEngine:
 
     def hacer_movimiento_inteligente(self):
         """
-        Inicia la búsqueda del mejor movimiento usando Minimax con Poda Alfa-Beta.
+        Inicia la toma de decisiones combinando teoría de libros y Minimax.
+        Solucionado el problema de predictibilidad mediante la gestión aleatoria de empates.
         """
+        import random
 
-        # COMPROBACIÓN PRIORITARIA: ¿Estamos en el libro de aperturas?
+        # 1. COMPROBACIÓN PRIORITARIA: Libro de aperturas
         mov_teorico = self.obtener_movimiento_libro()
         if mov_teorico:
-            print("-> Jugada de libro de aperturas ejecutada por la IA.")
+            print(f"-> Jugada de libro de aperturas ejecutada por la IA: {mov_teorico}")
             self.board.push(mov_teorico)
             return True
 
-        # Si ya no hay teoría en el libro, el motor clásico (Minimax) toma el control
-
-        mejor_movimiento = None
+        # 2. Si no hay libro, entra Minimax clásico
+        mejores_movimientos = []
         mejor_valor = float('inf') 
-        
-        # Valores iniciales para la poda
         alfa = -float('inf')
         beta = float('inf')
         
@@ -258,19 +276,21 @@ class ChessEngine:
 
         for mov in movimientos_legales:
             self.board.push(mov)
-            # Pasamos alfa y beta a la llamada inicial
-            # Dejamos la profundidad en 2 (ahora que es más rápido, se lo puede permitir)
             valor_tablero = self.minimax(2, True, alfa, beta) 
             self.board.pop()
 
+            # --- SISTEMA DE DESEMPATE ALEATORIO TÁCTICO ---
             if valor_tablero < mejor_valor:
                 mejor_valor = valor_tablero
-                mejor_movimiento = mov
+                mejores_movimientos = [mov] # Encontrado un nuevo mínimo absoluto, reiniciamos lista
+            elif valor_tablero == mejor_valor:
+                mejores_movimientos.append(mov) # Empate exacto, añadimos como opción alternativa
 
-            # Como el motor juega con negras, actualiza la cota superior (beta)
             beta = min(beta, valor_tablero)
 
-        if mejor_movimiento:
+        if mejores_movimientos:
+            # Seleccionamos una opción al azar de entre todas las que empatan con la puntuación óptima
+            mejor_movimiento = random.choice(mejores_movimientos)
             self.board.push(mejor_movimiento)
             return True
             
@@ -355,63 +375,43 @@ class ChessEngine:
         return puntos
 
     def obtener_movimiento_libro(self):
-        """
-        Consulta el archivo .bin de la carpeta data.
-        Devuelve una jugada teórica aleatoria elegida entre todas las opciones 
-        disponibles en el libro para garantizar la variedad de aperturas.
-        """
-        ruta_libro = "data/aperturas.bin"
+        """Consulta el archivo .bin usando la nueva ruta absoluta resuelta."""
         try:
-            with chess.polyglot.open_reader(ruta_libro) as reader:
-                # Obtenemos la lista completa de todas las jugadas teóricas válidas para esta posición
+            with chess.polyglot.open_reader(self.ruta_bin) as reader:
                 entradas = list(reader.find_all(self.board))
-                if entradas:
-                    import random
-                    # Seleccionamos una al azar del libro completo (e4, d4, c4, Nf3, etc.)
-                    entrada_elegida = random.choice(entradas)
-                    return entrada_elegida.move
+                entradas_validas = [e for e in entradas if e.weight > 0]
+                
+                if entradas_validas:
+                    movimientos = [e.move for e in entradas_validas]
+                    pesos = [e.weight for e in entradas_validas]
+                    eleccion = random.choices(movimientos, weights=pesos, k=1)
+                    return eleccion[0]
         except (FileNotFoundError, IndexError):
             return None
         return None
 
     def obtener_nombre_apertura(self):
         """
-        Determina la apertura actual basada en la secuencia de jugadas (UCI)
-        en lugar de FEN estáticos, permitiendo que el nombre persista en la interfaz.
+        Determina la apertura ordenando el diccionario por longitud 
+        para evitar que las líneas generales tapen a las variantes específicas.
         """
-        # Convertimos el historial completo de movimientos a texto (ej: "e2e4 c7c5 g1f3")
         historial_uci = " ".join([mov.uci() for mov in self.board.move_stack])
         
-        # Diccionario de líneas teóricas ordenadas por profundidad (de más específicas a generales)
-        aperturas_uci = {
-            "e2e4 e7e5 g1f3 b8c6 f1b5": "Apertura Española (Ruy López)",
-            "e2e4 e7e5 g1f3 b8c6 f1c4": "Apertura Italiana",
-            "e2e4 e7e5 g1f3 g8f6": "Defensa Petrov",
-            "d2d4 d7d5 c2c4": "Gámbito de Dama",
-            "e2e4 c7c5 g1f3 d7d6 d2d4 c5d4": "Defensa Siciliana (Variante Abierta)",
-            "e2e4 c7c5": "Defensa Siciliana",
-            "e2e4 e7e6": "Defensa Francesa",
-            "e2e4 c7c6": "Defensa Caro-Kann",
-            "e2e4 g7g6": "Defensa Moderna / Pirc",
-            "d2d4 d7d5": "Partida Cerrada (1.d4 d5)",
-            "d2d4 g8f6 c2c4 g7g6": "Defensa India de Rey",
-            "e2e4 e7e5": "Partida Abierta (1.e4 e5)",
-            "e2e4": "Apertura de Peón de Rey (1.e4)",
-            "d2d4": "Apertura de Peón de Dama (1.d4)",
-            "g1f3": "Apertura Réti (1.Nf3)",
-            "c2c4": "Apertura Inglesa (1.c4)"
-        }
+        # --- SOLUCIÓN AL BUG DE COINCIDENCIAS ---
+        # Ordenamos las aperturas de la cadena más larga (más específica) a la más corta
+        aperturas_ordenadas = sorted(
+            self.diccionario_aperturas.items(), 
+            key=lambda x: len(x[0]), 
+            reverse=True
+        )
         
-        # Comprobamos si el historial de la partida coincide con el inicio de alguna teoría
-        for secuencia, nombre in aperturas_uci.items():
+        for secuencia, nombre in aperturas_ordenadas:
             if historial_uci.startswith(secuencia):
-                # Si la partida está en las primeras fases (menos de 12 jugadas por bando)
-                if len(self.board.move_stack) <= 24:
+                if len(self.board.move_stack) <= 16:
                     return nombre
                 else:
                     return f"Fase Avanzada ({nombre})"
                     
-        # Si el historial está vacío (tras iniciar o reiniciar con 'R')
         if len(self.board.move_stack) == 0:
             return "Posición Inicial"
             
