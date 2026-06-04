@@ -27,61 +27,42 @@ def dibujar_tablero(pantalla):
             color = colores[((f + c) % 2)]
             pygame.draw.rect(pantalla, color, pygame.Rect(c*TAM_CASILLA, f*TAM_CASILLA, TAM_CASILLA, TAM_CASILLA))
 
-def dibujar_piezas(pantalla, board):
-    """
-    Dibuja las piezas sobre el tablero basándose en el estado del motor (board).
-    """
-    # Calculamos cuánto espacio sobra para centrar la pieza en su casilla
-    offset = (TAM_CASILLA - PIEZAS['wp'].get_width()) // 2
-    
-    for f in range(DIMENSION):
-        for c in range(DIMENSION):
-            # IMPORTANTE: python-chess cuenta desde abajo (fila 0 = abajo), 
-            # pero pygame dibuja desde arriba (fila 0 = arriba).
-            # Por eso invertimos la fila restando: 7 - f
-            casilla = chess.square(c, 7 - f)
-            pieza = board.piece_at(casilla) 
+def dibujar_piezas(pantalla, board, color_humano=chess.WHITE):
+    """ Dibuja las piezas orientadas según el color del jugador. """
+    for casilla in chess.SQUARES:
+        pieza = board.piece_at(casilla)
+        if pieza is not None:
+            nombre_pieza = f"{'w' if pieza.color == chess.WHITE else 'b'}{pieza.symbol().lower()}"
             
-            if pieza is not None:
-                # Determinamos el nombre del archivo (ej: 'w' + 'p' = 'wp' para peón blanco)
-                color = 'w' if pieza.color == chess.WHITE else 'b'
-                tipo = pieza.symbol().lower()
-                nombre_pieza = color + tipo
+            # MATEMÁTICA DE ESPEJO: Si jugamos con negras, invertimos filas y columnas
+            if color_humano == chess.WHITE:
+                fil = 7 - chess.square_rank(casilla)
+                col = chess.square_file(casilla)
+            else:
+                fil = chess.square_rank(casilla)
+                col = 7 - chess.square_file(casilla)
                 
-                # Dibujamos la pieza sumando el offset en X e Y para centrarla
-                pantalla.blit(PIEZAS[nombre_pieza], (c*TAM_CASILLA + offset, f*TAM_CASILLA + offset))
+            offset = (TAM_CASILLA - PIEZAS[nombre_pieza].get_width()) // 2
+            pantalla.blit(PIEZAS[nombre_pieza], (col * TAM_CASILLA + offset, fil * TAM_CASILLA + offset))
 
-def resaltar_casillas(pantalla, casilla_sel, movimientos_validos):
-    """Resalta la casilla clickeada, los movimientos posibles (puntos) y el ratón (hover)."""
+def resaltar_casillas(pantalla, casilla_seleccionada, movimientos_validos, color_humano=chess.WHITE):
+    """ Resalta la casilla seleccionada y los posibles destinos adaptando la perspectiva. """
+    superficie = pygame.Surface((TAM_CASILLA, TAM_CASILLA), pygame.SRCALPHA)
     
-    # 1. Resaltar casilla seleccionada (Cuadrado amarillo transparente)
-    if casilla_sel:
-        f, c = casilla_sel
-        s = pygame.Surface((TAM_CASILLA, TAM_CASILLA))
-        s.set_alpha(100) # 100 de transparencia
-        s.fill(pygame.Color("yellow"))
-        pantalla.blit(s, (c * TAM_CASILLA, f * TAM_CASILLA))
-
-        # 2. Resaltar movimientos posibles para esa pieza (Círculos azules)
+    if casilla_seleccionada:
+        f, c = casilla_seleccionada
+        superficie.fill((255, 255, 0, 100)) # Amarillo transparente
+        pantalla.blit(superficie, (c * TAM_CASILLA, f * TAM_CASILLA))
+        
+        superficie.fill((0, 255, 0, 100)) # Verde para movimientos válidos
         for mov in movimientos_validos:
-            destino = mov.to_square
-            col_dest = chess.square_file(destino)
-            fil_dest = 7 - chess.square_rank(destino) # Invertimos para pygame
-            
-            # Dibujamos el círculo justo en el centro de la casilla destino
-            centro_x = col_dest * TAM_CASILLA + TAM_CASILLA//2
-            centro_y = fil_dest * TAM_CASILLA + TAM_CASILLA//2
-            pygame.draw.circle(pantalla, pygame.Color("blue"), (centro_x, centro_y), 8)
-
-    # 3. Iluminar casilla bajo el ratón (Hover en azul suave)
-    x, y = pygame.mouse.get_pos()
-    c, f = x // TAM_CASILLA, y // TAM_CASILLA
-    # Solo iluminamos si el ratón está dentro de los límites lógicos del tablero
-    if 0 <= c < 8 and 0 <= f < 8:
-        s = pygame.Surface((TAM_CASILLA, TAM_CASILLA))
-        s.set_alpha(50)
-        s.fill(pygame.Color("blue"))
-        pantalla.blit(s, (c * TAM_CASILLA, f * TAM_CASILLA))
+            if color_humano == chess.WHITE:
+                f_dest = 7 - chess.square_rank(mov.to_square)
+                c_dest = chess.square_file(mov.to_square)
+            else:
+                f_dest = chess.square_rank(mov.to_square)
+                c_dest = 7 - chess.square_file(mov.to_square)
+            pantalla.blit(superficie, (c_dest * TAM_CASILLA, f_dest * TAM_CASILLA))
 
 def mostrar_mensaje_final(pantalla, texto):
     """
@@ -125,22 +106,99 @@ def dibujar_barra_estado(pantalla, texto_apertura):
     
     pantalla.blit(superficie_texto, texto_rect)
 
-def resaltar_guia_teorica(pantalla, movimiento_guia):
-    """
-    Dibuja un indicador visual azul en el tablero para sugerirle al 
-    usuario el siguiente movimiento para completar la apertura elegida.
-    """
+def resaltar_guia_teorica(pantalla, movimiento_guia, color_humano=chess.WHITE):
+    """ Dibuja la guía azul invertida si somos las negras. """
     if movimiento_guia is not None:
-        # Extraemos las casillas de origen y destino del movimiento chess.Move
         casilla_origen = movimiento_guia.from_square
         casilla_destino = movimiento_guia.to_square
         
-        # Convertimos las casillas de la librería (0-63) a coordenadas X, Y de la pantalla
-        # python-chess cuenta desde abajo a la izquierda, Pygame desde arriba a la izquierda
         for casilla, color in [(casilla_origen, (0, 191, 255)), (casilla_destino, (30, 144, 255))]:
-            fila = 7 - (casilla // 8)
-            columna = casilla % 8
-            
-            # Dibujamos un rectángulo con un borde grueso (4px) alrededor de las casillas sugeridas
-            rectangulo = pygame.Rect(columna * TAM_CASILLA, fila * TAM_CASILLA, TAM_CASILLA, TAM_CASILLA)
+            if color_humano == chess.WHITE:
+                fil = 7 - (casilla // 8)
+                columna = casilla % 8
+            else:
+                fil = (casilla // 8)
+                columna = 7 - (casilla % 8)
+                
+            rectangulo = pygame.Rect(columna * TAM_CASILLA, fil * TAM_CASILLA, TAM_CASILLA, TAM_CASILLA)
             pygame.draw.rect(pantalla, color, rectangulo, 4)
+
+def pantalla_seleccion_color(pantalla, reloj, ancho, alto):
+    """
+    Dibuja un menú de selección de bando antes de iniciar el bucle principal.
+    Devuelve chess.WHITE o chess.BLACK según el botón pulsado.
+    """
+    fuente = pygame.font.SysFont("Helvetica", 32, bold=True)
+    esperando = True
+    color_elegido = None
+
+    while esperando:
+        pantalla.fill((40, 40, 40)) # Fondo gris oscuro elegante
+        
+        # Coordenadas y dimensiones de los botones
+        rect_blancas = pygame.Rect(ancho//2 - 150, alto//2 - 80, 300, 60)
+        rect_negras  = pygame.Rect(ancho//2 - 150, alto//2 + 20, 300, 60)
+        
+        # Dibujamos los botones
+        pygame.draw.rect(pantalla, (240, 240, 240), rect_blancas, border_radius=10)
+        pygame.draw.rect(pantalla, (30, 30, 30), rect_negras, border_radius=10)
+        pygame.draw.rect(pantalla, (200, 200, 200), rect_negras, 2, border_radius=10) # Borde
+        
+        texto_b = fuente.render("Jugar con Blancas", True, (20, 20, 20))
+        texto_n = fuente.render("Jugar con Negras", True, (240, 240, 240))
+        
+        pantalla.blit(texto_b, texto_b.get_rect(center=rect_blancas.center))
+        pantalla.blit(texto_n, texto_n.get_rect(center=rect_negras.center))
+        
+        pygame.display.flip()
+        
+        # Escuchamos los clics
+        for evento in pygame.event.get():
+            if evento.type == pygame.QUIT:
+                pygame.quit()
+                exit()
+            elif evento.type == pygame.MOUSEBUTTONDOWN:
+                if rect_blancas.collidepoint(evento.pos):
+                    color_elegido = chess.WHITE
+                    esperando = False
+                elif rect_negras.collidepoint(evento.pos):
+                    color_elegido = chess.BLACK
+                    esperando = False
+                    
+        reloj.tick(15)
+        
+    return color_elegido
+
+
+def dibujar_coordenadas(pantalla, color_humano):
+    """
+    Dibuja los indicadores de fila (1-8) y columna (a-h) en los bordes del tablero.
+    La perspectiva se invierte automáticamente si el jugador humano lleva las negras.
+    """
+    # Usamos una fuente pequeña y legible
+    fuente = pygame.font.SysFont("Helvetica", 14, bold=True)
+    
+    # 1. Definimos el orden lógico según la perspectiva del jugador
+    if color_humano == chess.WHITE:
+        filas = ['8', '7', '6', '5', '4', '3', '2', '1']
+        columnas = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h']
+    else:
+        filas = ['1', '2', '3', '4', '5', '6', '7', '8']
+        columnas = ['h', 'g', 'f', 'e', 'd', 'c', 'b', 'a']
+        
+    for i in range(8):
+        # Para que el texto se lea bien, puedes ajustar este color (ej. un gris oscuro o claro)
+        # según la paleta de colores que estés usando para tus casillas.
+        color_texto = (40, 40, 40) 
+        
+        # Dibujar NÚMEROS (Eje Y)
+        # Se pintan en el margen izquierdo (columna 0) de cada fila
+        texto_fila = fuente.render(filas[i], True, color_texto)
+        # X=5 para un pequeño margen, Y depende de la iteración
+        pantalla.blit(texto_fila, (5, i * TAM_CASILLA + 5))
+        
+        # Dibujar LETRAS (Eje X)
+        # Se pintan en el margen inferior (fila 7) de cada columna
+        texto_col = fuente.render(columnas[i], True, color_texto)
+        # X depende de la iteración (casi al final de la casilla), Y pegado al fondo
+        pantalla.blit(texto_col, (i * TAM_CASILLA + TAM_CASILLA - 15, 8 * TAM_CASILLA - 20))

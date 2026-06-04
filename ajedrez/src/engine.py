@@ -1,9 +1,13 @@
 # src/engine.py
 import json
 import random
+import os
+import glob
+import datetime
 from typing import Dict, Optional, List
 import chess
 import chess.polyglot
+import chess.pgn
 import config  # Importamos centralizadamente la configuración
 
 class ChessEngine:
@@ -137,28 +141,33 @@ class ChessEngine:
         return None
 
     def evaluar_tablero(self) -> float:
-        """
-        Función de evaluación heurística lineal. 
-        Garantiza un recorrido único por las 64 casillas sin bucles internos.
-        """
-        puntuacion_total: float = 0
+        puntuacion_total: float = 0.0
         
-        # Recorrido plano de 64 iteraciones estrictas
+        VALORES_SEGUROS = {
+            chess.PAWN: 100, chess.KNIGHT: 300, chess.BISHOP: 300,
+            chess.ROOK: 500, chess.QUEEN: 900, chess.KING: 90000
+        }
+        
         for casilla in chess.SQUARES:
             pieza = self.board.piece_at(casilla)
             if pieza is not None:
-                valor_material = config.VALORES_PIEZAS.get(pieza.piece_type, 0)
+                valor_material = VALORES_SEGUROS.get(pieza.piece_type, 0)
                 valor_posicional = 0
                 
-                # Espejo para el bando negro
                 casilla_tabla = casilla if pieza.color == chess.WHITE else chess.square_mirror(casilla)
 
-                if pieza.piece_type == chess.PAWN: valor_posicional = config.PST_PEON[casilla_tabla]
-                elif pieza.piece_type == chess.KNIGHT: valor_posicional = config.PST_CABALLO[casilla_tabla]
-                elif pieza.piece_type == chess.BISHOP: valor_posicional = config.PST_ALFIL[casilla_tabla]
-                elif pieza.piece_type == chess.ROOK: valor_posicional = config.PST_TORRE[casilla_tabla]
-                elif pieza.piece_type == chess.QUEEN: valor_posicional = config.PST_REINA[casilla_tabla]
-                elif pieza.piece_type == chess.KING: valor_posicional = config.PST_REY[casilla_tabla]
+                if pieza.piece_type == chess.PAWN: 
+                    valor_posicional = config.PST_PEON[casilla_tabla]
+                elif pieza.piece_type == chess.KNIGHT: 
+                    valor_posicional = config.PST_CABALLO[casilla_tabla]
+                elif pieza.piece_type == chess.BISHOP: 
+                    valor_posicional = config.PST_ALFIL[casilla_tabla]
+                elif pieza.piece_type == chess.ROOK: 
+                    valor_posicional = config.PST_TORRE[casilla_tabla]
+                elif pieza.piece_type == chess.QUEEN: 
+                    valor_posicional = config.PST_REINA[casilla_tabla]
+                elif pieza.piece_type == chess.KING: 
+                    valor_posicional = config.PST_REY[casilla_tabla]
                 
                 valor_final_pieza = valor_material + valor_posicional
                 
@@ -167,13 +176,6 @@ class ChessEngine:
                 else:
                     puntuacion_total -= valor_final_pieza
                     
-        # --- LÓGICA DE FINALES (MOP-UP) DIRECTA ---
-        # Evaluamos de forma externa y puramente secuencial
-        if puntuacion_total > 400:
-            puntuacion_total += self._forzar_rey_esquina(chess.WHITE, chess.BLACK)
-        elif puntuacion_total < -400:
-            puntuacion_total -= self._forzar_rey_esquina(chess.BLACK, chess.WHITE)
-            
         return puntuacion_total
 
     def _forzar_rey_esquina(self, color_amigo: chess.Color, color_enemy: chess.Color) -> float:
@@ -205,33 +207,64 @@ class ChessEngine:
         
         return puntos_mopup
 
-    def quiescencia(self, alfa: float, beta: float, maximizando_blancas: bool) -> float:
+    def quiescencia(self, alfa: float, beta: float, maximizando_blancas: bool, limite_profundidad: int = 4) -> float:
         eval_actual = self.evaluar_tablero()
-        if maximizando_blancas:
-            if eval_actual >= beta: return beta
-            alfa = max(alfa, eval_actual)
-        else:
-            if eval_actual <= alfa: return alfa
-            beta = min(beta, eval_actual)
+        
+        if limite_profundidad == 0:
+            return eval_actual
 
-        for mov in self.board.generate_legal_captures():
-            self.board.push(mov)
-            puntuacion = self.evaluar_tablero()
-            self.board.pop()
-            
+        en_jaque = self.board.is_check()
+        
+        # Soft-fail Stand Pat: Devolvemos eval_actual en lugar del límite beta
+        if not en_jaque:
             if maximizando_blancas:
-                eval_actual = max(eval_actual, puntuacion)
+                if eval_actual >= beta: return eval_actual
                 alfa = max(alfa, eval_actual)
-                if beta <= alfa: break
             else:
-                eval_actual = min(eval_actual, puntuacion)
+                if eval_actual <= alfa: return eval_actual
                 beta = min(beta, eval_actual)
+
+        if en_jaque:
+            movimientos_tacticos = list(self.board.legal_moves)
+        else:
+            movimientos_tacticos = []
+            for mov in self.board.legal_moves:
+                if self.board.is_capture(mov) or self.board.gives_check(mov):
+                    movimientos_tacticos.append(mov)
+
+        movimientos_tacticos = self._evaluar_y_ordenar_movimientos(movimientos_tacticos)
+
+        if maximizando_blancas:
+            max_eval = eval_actual if not en_jaque else -float('inf')
+            for mov in movimientos_tacticos:
+                self.board.push(mov)
+                puntuacion = self.quiescencia(alfa, beta, False, limite_profundidad - 1)
+                self.board.pop()
+                
+                max_eval = max(max_eval, puntuacion)
+                alfa = max(alfa, max_eval)
                 if beta <= alfa: break
-        return eval_actual
+            return max_eval
+        else:
+            min_eval = eval_actual if not en_jaque else float('inf')
+            for mov in movimientos_tacticos:
+                self.board.push(mov)
+                puntuacion = self.quiescencia(alfa, beta, True, limite_profundidad - 1)
+                self.board.pop()
+                
+                min_eval = min(min_eval, puntuacion)
+                beta = min(beta, min_eval)
+                if beta <= alfa: break
+            return min_eval
 
     def minimax(self, profundidad: int, maximizando_blancas: bool, alfa: float, beta: float) -> float:
+        import pygame
+        pygame.event.pump() 
+
         if self.board.is_checkmate():
+            # El terror absoluto al Jaque Mate
             return -100000 - profundidad if self.board.turn == chess.WHITE else 100000 + profundidad
+            
         if self.board.is_stalemate() or self.board.is_insufficient_material() or self.board.is_repetition(2):
             return 0
 
@@ -246,9 +279,10 @@ class ChessEngine:
                 self.board.push(mov)
                 eval_actual = self.minimax(profundidad - 1, False, alfa, beta)
                 self.board.pop()
+                
                 max_eval = max(max_eval, eval_actual)
                 alfa = max(alfa, eval_actual)
-                if beta <= alfa: break 
+                if beta <= alfa: break
             return max_eval
         else:
             min_eval = float('inf')
@@ -256,6 +290,7 @@ class ChessEngine:
                 self.board.push(mov)
                 eval_actual = self.minimax(profundidad - 1, True, alfa, beta)
                 self.board.pop()
+                
                 min_eval = min(min_eval, eval_actual)
                 beta = min(beta, eval_actual)
                 if beta <= alfa: break
@@ -292,59 +327,112 @@ class ChessEngine:
         # =========================================================================
         # 3. MOTOR CLÁSICO (Minimax + Poda Alfa-Beta + Ordenamiento a Profundidad 3)
         # =========================================================================
-        # Si se sale completamente de la teoría, el motor calcula por fuerza bruta.
         movimientos_legales = list(self.board.legal_moves)
         if not movimientos_legales: 
             return False
 
         movimientos_ordenados = self._evaluar_y_ordenar_movimientos(movimientos_legales)
         mejores_movimientos = []
-        mejor_valor = float('inf')
+        
+        # Detectamos de qué color está jugando la IA
+        soy_blancas = self.board.turn == chess.WHITE
+        
+        # INICIALIZACIÓN CORRECTA:
+        # Si somos blancas, partimos de -infinito para buscar la máxima puntuación
+        # Si somos negras, partimos de +infinito para buscar la mínima puntuación
+        mejor_valor = -float('inf') if soy_blancas else float('inf')
         alfa = -float('inf')
         beta = float('inf')
 
+        # ESCALADO DINÁMICO DE PROFUNDIDAD
+        material_tablero = sum(config.VALORES_PIEZAS.get(p.piece_type, 0) for p in self.board.piece_map().values())
+        profundidad_calculo = 5 if material_tablero < 2000 else 3
+
         for mov in movimientos_ordenados:
             self.board.push(mov)
-            puntuacion_rama = self.minimax(3, True, alfa, beta) 
+            # Evaluamos la rama pasando el turno al rival (not soy_blancas)
+            puntuacion_rama = self.minimax(3, not soy_blancas, alfa, beta) 
             self.board.pop()
 
-            if puntuacion_rama < mejor_valor:
-                mejor_valor = puntuacion_rama
-                mejores_movimientos = [mov]
-            elif puntuacion_rama == mejor_valor:
-                mejores_movimientos.append(mov)
-            beta = min(beta, puntuacion_rama)
+            if soy_blancas:
+                # Las blancas MAXIMIZAN (buscan puntuaciones mayores)
+                if puntuacion_rama > mejor_valor:
+                    mejor_valor = puntuacion_rama
+                    mejores_movimientos = [mov]
+                elif puntuacion_rama == mejor_valor:
+                    mejores_movimientos.append(mov)
+                alfa = max(alfa, puntuacion_rama)
+            else:
+                # Las negras MINIMIZAN (buscan puntuaciones menores)
+                if puntuacion_rama < mejor_valor: 
+                    mejor_valor = puntuacion_rama
+                    mejores_movimientos = [mov]
+                elif puntuacion_rama == mejor_valor:
+                    mejores_movimientos.append(mov)
+                beta = min(beta, puntuacion_rama)
 
+        # Mecanismo de seguridad
         if not mejores_movimientos:
             mejores_movimientos = [movimientos_ordenados[0]]
 
         movimiento_final = random.choice(mejores_movimientos)
         self.board.push(movimiento_final)
-        print(f"Movimiento de la IA realizado: {movimiento_final}. Turno de las blancas.")
+        
+        color_actual = "blancas" if soy_blancas else "negras"
+        color_rival = "negras" if soy_blancas else "blancas"
+        print(f"Movimiento de la IA ({color_actual}) realizado: {movimiento_final}. Turno de las {color_rival}.")
         return True
 
     def _evaluar_y_ordenar_movimientos(self, movimientos: List[chess.Move]) -> List[chess.Move]:
         """
-        Ordena la lista de movimientos legales priorizando capturas y jaques.
-        Esto maximiza la eficiencia de la Poda Alfa-Beta disminuyendo los nodos visitados.
+        Ordena la lista de movimientos legales para optimizar la Poda Alfa-Beta.
+        Aplica MVV-LVA y la heurística "Desperado" (Morir matando).
         """
         def score_movimiento(mov: chess.Move) -> int:
             puntuacion = 0
+            
+            # 1. TÁCTICA MVV-LVA (Víctima más valiosa - Atacante menos valioso)
             if self.board.is_capture(mov):
                 pieza_atacada = self.board.piece_at(mov.to_square)
                 pieza_atacante = self.board.piece_at(mov.from_square)
+                
                 if pieza_atacada and pieza_atacante:
-                    puntuacion += 1000 + (config.VALORES_PIEZAS.get(pieza_atacada.piece_type, 0) - 
-                                          config.VALORES_PIEZAS.get(pieza_atacante.piece_type, 0) // 10)
+                    valor_victima = config.VALORES_PIEZAS.get(pieza_atacada.piece_type, 0)
+                    valor_atacante = config.VALORES_PIEZAS.get(pieza_atacante.piece_type, 0)
+                    
+                    # Priorizamos comer piezas caras con piezas baratas (Ej. Peón come Reina = +8900)
+                    puntuacion += 10000 + valor_victima - valor_atacante
+
+                    # 2. EL INSTINTO "MUERE MATANDO" (Desperado) - MEJORADO
+                    if self.board.is_attacked_by(not self.board.turn, mov.from_square):
+                        puntuacion += 5000
+                        # Bonus proporcional al valor de la víctima: prioriza cazar piezas caras
+                        puntuacion += valor_victima * 2
+
             
+            # 3. PROMOCIONES DE PEÓN
+            # Coronar una reina debe ser la máxima prioridad absoluta
+            if mov.promotion == chess.QUEEN:
+                puntuacion += 9000
+                
+            # 4. JAQUES Y TENEDORES AL REY
+            # Simulamos el movimiento para ver si da jaque
             self.board.push(mov)
             if self.board.is_check():
-                puntuacion += 500
+                # Forzamos a la IA a investigar todos los jaques al principio de su cálculo
+                puntuacion += 2000
             self.board.pop()
             
+            # 5. PENALIZACIÓN: No mover la reina a una casilla atacada por el rival
+            pieza_origen = self.board.piece_at(mov.from_square)
+            if pieza_origen and pieza_origen.piece_type == chess.QUEEN:
+                self.board.push(mov)
+                if self.board.is_attacked_by(self.board.turn, mov.to_square):
+                    puntuacion -= 8000  # Coste catastrófico
+                self.board.pop()
+
             return puntuacion
 
-        # ¡CRUCIAL! Asegúrate de que esta línea exista y esté al final de la función principal
         return sorted(movimientos, key=score_movimiento, reverse=True)
     
     def forzar_inicio_teorico(self, nombre_apertura: str) -> None:
@@ -403,3 +491,45 @@ class ChessEngine:
                 return chess.Move.from_uci(movimientos_teoria[len(movimientos_jugados)])
                 
         return None
+
+    def guardar_partida_pgn(self, resultado_str: str, color_humano: chess.Color) -> None:
+        """
+        Exporta la partida actual a formato estándar PGN para su posterior análisis.
+        Mantiene un sistema de rotación que elimina partidas viejas, dejando solo las 5 últimas.
+        """
+        directorio_logs = "logs_partidas"
+        if not os.path.exists(directorio_logs):
+            os.makedirs(directorio_logs)
+
+        # 1. Creamos el archivo de partida desde el historial del tablero
+        juego_pgn = chess.pgn.Game.from_board(self.board)
+        
+        # 2. Añadimos metadatos (Cabeceras)
+        juego_pgn.headers["Event"] = "Auditoría TFG - Pruebas de Motor"
+        juego_pgn.headers["Date"] = datetime.datetime.now().strftime("%Y.%m.%d")
+        juego_pgn.headers["White"] = "Humano" if color_humano == chess.WHITE else "IA Minimax"
+        juego_pgn.headers["Black"] = "IA Minimax" if color_humano == chess.WHITE else "Humano"
+        juego_pgn.headers["Result"] = resultado_str
+
+        # 3. Guardamos el archivo con la marca de tiempo exacta
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        ruta_archivo = os.path.join(directorio_logs, f"partida_{timestamp}.pgn")
+        
+        with open(ruta_archivo, "w", encoding="utf-8") as f:
+            f.write(str(juego_pgn))
+            
+        print(f"\n[SISTEMA] Partida guardada en: {ruta_archivo}")
+
+        # 4. SISTEMA DE ROTACIÓN (Mantener solo las 5 más recientes)
+        archivos_pgn = glob.glob(os.path.join(directorio_logs, "*.pgn"))
+        # Ordenamos de más antiguo a más nuevo basándonos en la fecha de creación
+        archivos_pgn.sort(key=os.path.getctime) 
+        
+        # Mientras haya más de 5 archivos, borramos el primero (el más viejo)
+        while len(archivos_pgn) > 5:
+            archivo_viejo = archivos_pgn.pop(0)
+            try:
+                os.remove(archivo_viejo)
+                print(f"[SISTEMA] Rotación: Archivo antiguo eliminado ({archivo_viejo})")
+            except OSError:
+                pass

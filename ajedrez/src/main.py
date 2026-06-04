@@ -1,5 +1,6 @@
 import pygame
 import chess
+import threading
 import interfaz
 from engine import ChessEngine
 
@@ -18,7 +19,7 @@ def main():
     apertura_a_entrenar = ""
 
     # Define aquí qué apertura quieres construir en el tablero paso a paso
-    #apertura_a_entrenar = "Siciliana: Variante Dragón"
+    apertura_a_entrenar = "Siciliana: Variante Dragón"
 
     # Descomentar esta línea para arrancar directamente en la variante que quieras auditar:
     #motor.forzar_inicio_teorico("Siciliana: Variante Dragón")
@@ -34,6 +35,17 @@ def main():
     partida_finalizada = False
     mensaje_final = "" # Aquí guardaremos el texto dinámico
 
+    # =================================================================
+    # NUEVO: MOSTRAR MENÚ DE SELECCIÓN DE COLOR ANTES DE INICIAR
+    # =================================================================
+    color_humano = interfaz.pantalla_seleccion_color(pantalla, reloj, interfaz.ANCHO, interfaz.ALTO)
+
+    # ---> VARIABLES CACHÉ PARA EVITAR LA CONDICIÓN DE CARRERA <---
+    tablero_visual = motor.board.copy()
+    nombre_apertura_cache = "Posición Inicial"
+    mov_sugerido_cache = None
+    estado_ia = {"calculando": False}
+
     # 2. BUCLE PRINCIPAL DEL JUEGO
     while corriendo:
     # --- GESTIÓN DE EVENTOS (Turno del Humano) ---
@@ -42,13 +54,21 @@ def main():
                 corriendo = False
 
             # --- EVENTOS DE RATÓN --- #
-            # Bloqueamos los clics del usuario si la partida ya ha finalizado
-            elif e.type == pygame.MOUSEBUTTONDOWN and not partida_finalizada:
+            # Bloqueamos los clics del usuario si la partida ya ha finalizado o si la máquina está pensando
+            elif e.type == pygame.MOUSEBUTTONDOWN and not partida_finalizada and not estado_ia["calculando"]:
                 ubicacion = pygame.mouse.get_pos()
                 col = ubicacion[0] // interfaz.TAM_CASILLA
                 fil = ubicacion[1] // interfaz.TAM_CASILLA
                 
                 casilla_clic_sq = chess.square(col, 7-fil)
+                pieza = motor.pieza_en(casilla_clic_sq)
+
+                # MODIFICADO: Adaptamos el clic según la perspectiva del color elegido
+                if color_humano == chess.WHITE:
+                    casilla_clic_sq = chess.square(col, 7-fil)
+                else:
+                    casilla_clic_sq = chess.square(7-col, fil)
+                
                 pieza = motor.pieza_en(casilla_clic_sq)
 
                 # LÓGICA DE SELECCIÓN INTELIGENTE
@@ -74,6 +94,9 @@ def main():
                     # 1. Reiniciamos la lógica del motor
                     motor.reiniciar_juego()
                     
+                    # ---> NUEVO: Volvemos a lanzar el menú flotante para elegir bando <---
+                    color_humano = interfaz.pantalla_seleccion_color(pantalla, reloj, interfaz.ANCHO, interfaz.ALTO)
+                    
                     # 2. Limpiamos todas las variables de control visual
                     partida_finalizada = False
                     mensaje_final = ""
@@ -83,62 +106,92 @@ def main():
                     
                     print("\n--- PARTIDA REINICIADA ---")
 
+                # ---> NUEVO: BOTÓN DE DEPURACIÓN (P) <---
+                elif e.key == pygame.K_p:
+                    print("\n--- HISTORIAL DE LA PARTIDA (EN CURSO) ---")
+                    # Extraemos la partida directamente desde la memoria del tablero
+                    juego_actual = chess.pgn.Game.from_board(motor.board)
+                    print(juego_actual)
+                    print("------------------------------------------\n")
+
         # --- COMPROBACIÓN GENERAL DE FIN DE PARTIDA ---
-        if motor.juego_terminado() and not partida_finalizada:
+        if not estado_ia["calculando"] and motor.juego_terminado() and not partida_finalizada:
             partida_finalizada = True
             
+            resultado_pgn = "*"
+
             # Analizamos la causa exacta del fin de partida para el cartel
             if motor.board.is_checkmate():
                 # Si es jaque mate, gana el jugador que NO tiene el turno actual
                 if motor.board.turn == chess.WHITE:
                     mensaje_final = "¡JAQUE MATE! Ganan las Negras"
+                    resultado_pgn = "0-1"
                 else:
                     mensaje_final = "¡JAQUE MATE! Ganan las Blancas"
+                    resultado_pgn = "1-0"
             elif motor.board.is_stalemate():
                 mensaje_final = "TABLAS: Rey Ahogado"
+                resultado_pgn = "1/2-1/2"
             elif motor.board.is_insufficient_material():
                 mensaje_final = "TABLAS: Material Insuficiente"
+                resultado_pgn = "1/2-1/2"
             else:
                 mensaje_final = "PARTIDA FINALIZADA (Tablas)"
+                resultado_pgn = "1/2-1/2"
                 
             print(f"\n{mensaje_final}")
 
+            motor.guardar_partida_pgn(resultado_pgn, color_humano)
+
         # --- LÓGICA DE LA IA (Turno de la Máquina) ---
-        if not motor.turno_actual() and not partida_finalizada:
-            print("La IA está pensando...")
+        if not estado_ia["calculando"] and motor.turno_actual() != color_humano and not partida_finalizada:
             
+            estado_ia["calculando"] = True # Bloqueamos para no lanzar 100 hilos
+            print("La IA esta pensando en segundo plano...") # ¡Corregido el print!
+            
+            # 1. Hacemos la "foto" estática ANTES de mandarla a pensar
+            tablero_visual = motor.board.copy()
+            nombre_apertura_cache = motor.obtener_nombre_apertura()
+            mov_sugerido_cache = motor.obtener_siguiente_movimiento_guia(apertura_a_entrenar)
+
             # --- SOLUCIÓN AL CONGELAMIENTO VISUAL ---
-            # 1. Forzamos un dibujado del tablero con tu jugada recién hecha
             interfaz.dibujar_tablero(pantalla)
-            interfaz.dibujar_piezas(pantalla, motor.board)
+            interfaz.dibujar_piezas(pantalla, motor.board, color_humano)
             pygame.display.flip() # Actualiza la ventana inmediatamente
-            
-            # Opcional: Una pausa minúscula de hardware para que el SO respire
             pygame.time.delay(10) 
+
+            def tarea_pensar():
+                # Esta es la única vez que se llama al motor
+                motor.hacer_movimiento_inteligente(apertura_a_entrenar)
+                estado_ia["calculando"] = False # Libera el candado al terminar
+                print("Movimiento de la IA realizado.") # Avisa cuando de verdad acaba
+                
+            # Lanzamos el hilo. El daemon=True hace que muera si cerramos la ventana
+            hilo_ia = threading.Thread(target=tarea_pensar)
+            hilo_ia.daemon = True 
+            hilo_ia.start()
             
-            # 2. Ahora sí, la IA bloquea el hilo para calcular, pero el tablero ya está actualizado
-            motor.hacer_movimiento_inteligente(apertura_a_entrenar) 
-            
+            # Limpiamos las selecciones de la interfaz mientras la IA piensa
             casilla_seleccionada = ()
             casilla_sq_seleccionada = None
             movimientos_validos = []
-            
-            print("Movimiento de la IA realizado. Turno de las blancas.")
        
         # 3. RENDERIZADO VISUAL (Se ejecuta en cada frame)
         interfaz.dibujar_tablero(pantalla)
-        interfaz.resaltar_casillas(pantalla, casilla_seleccionada, movimientos_validos)
-        interfaz.dibujar_piezas(pantalla, motor.board)
+        interfaz.dibujar_coordenadas(pantalla, color_humano)
+        interfaz.resaltar_casillas(pantalla, casilla_seleccionada, movimientos_validos, color_humano)
 
-        # NUEVO: Calculamos si toca sugerir un movimiento para la apertura elegida y lo pintamos
-        mov_sugerido = motor.obtener_siguiente_movimiento_guia(apertura_a_entrenar)
-        interfaz.resaltar_guia_teorica(pantalla, mov_sugerido)
+        # 2. Actualizamos la "foto" SOLO si la IA ha terminado de pensar y el motor está libre
+        if not estado_ia["calculando"]:
+            tablero_visual = motor.board.copy()
+            nombre_apertura_cache = motor.obtener_nombre_apertura()
+            mov_sugerido_cache = motor.obtener_siguiente_movimiento_guia(apertura_a_entrenar)
 
-        interfaz.dibujar_piezas(pantalla, motor.board)
-
-        # NUEVO: Obtenemos el nombre detectado por el motor y lo dibujamos abajo
-        nombre_apertura = motor.obtener_nombre_apertura()
-        interfaz.dibujar_barra_estado(pantalla, nombre_apertura)
+        interfaz.resaltar_guia_teorica(pantalla, mov_sugerido_cache, color_humano)
+        
+        # 3. Dibujamos LA FOTO ESTÁTICA, nunca el motor.board directamente
+        interfaz.dibujar_piezas(pantalla, tablero_visual, color_humano)
+        interfaz.dibujar_barra_estado(pantalla, nombre_apertura_cache)
 
         # SI LA PARTIDA HA TERMINADO, PINTAMOS EL CARTEL EN INTERFAZ
         if partida_finalizada:
