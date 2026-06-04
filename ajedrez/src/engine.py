@@ -176,6 +176,47 @@ class ChessEngine:
                 else:
                     puntuacion_total -= valor_final_pieza
                     
+        # =====================================================================
+        # DESEMPATE ESTRATÉGICO DE GRANO FINO (Rompe las mesetas de evaluación)
+        # =====================================================================
+    
+        # 1. CONTROL DEL CENTRO (Las 4 casillas críticas: d4, e4, d5, e5)
+        casillas_centrales = [chess.E4, chess.D4, chess.E5, chess.D5]
+        control_blanco = sum(1 for c in casillas_centrales if self.board.is_attacked_by(chess.WHITE, c))
+        control_negro = sum(1 for c in casillas_centrales if self.board.is_attacked_by(chess.BLACK, c))
+        
+        # Otorgamos 0.2 puntos por cada ataque al centro
+        puntuacion_total += (control_blanco - control_negro) * 0.2
+
+        # 2. PENALIZACIÓN POR PEONES DOBLADOS (Estructura sólida)
+        # Un peón bloqueando a otro de su mismo color es una debilidad permanente
+        peones_blancos = self.board.pieces(chess.PAWN, chess.WHITE)
+        peones_negros = self.board.pieces(chess.PAWN, chess.BLACK)
+        
+        columnas_blancas = [chess.square_file(sq) for sq in peones_blancos]
+        columnas_negras = [chess.square_file(sq) for sq in peones_negros]
+        
+        # Si hay más peones que columnas únicas, significa que hay peones en la misma columna
+        doblados_blancos = len(columnas_blancas) - len(set(columnas_blancas))
+        doblados_negros = len(columnas_negras) - len(set(columnas_negras))
+        
+        # Castigamos con -0.3 puntos cada peón doblado
+        puntuacion_total -= doblados_blancos * 0.3
+        puntuacion_total += doblados_negros * 0.3
+
+        # 3. HEURÍSTICA DE LIMPIEZA (MOP-UP) PARA FORZAR EL JAQUE MATE
+        # Solo lo activamos si hay una ventaja abrumadora (ej. > 400 puntos, casi una torre de ventaja)
+        # Esto evita que los reyes salgan a pasear absurdamente en el medio juego.
+        if abs(puntuacion_total) > 400:
+            if puntuacion_total > 0:
+                # Ganan las Blancas: premiamos acorralar al rey Negro
+                puntuacion_total += self._forzar_rey_esquina(chess.WHITE, chess.BLACK)
+            else:
+                # Ganan las Negras: premiamos acorralar al rey Blanco
+                puntuacion_total -= self._forzar_rey_esquina(chess.BLACK, chess.WHITE)
+                
+        return puntuacion_total
+                    
         return puntuacion_total
 
     def _forzar_rey_esquina(self, color_amigo: chess.Color, color_enemy: chess.Color) -> float:
@@ -325,7 +366,7 @@ class ChessEngine:
             return True
 
         # =========================================================================
-        # 3. MOTOR CLÁSICO (Minimax + Poda Alfa-Beta + Ordenamiento a Profundidad 3)
+        # 3. MOTOR CLASICO
         # =========================================================================
         movimientos_legales = list(self.board.legal_moves)
         if not movimientos_legales: 
@@ -333,103 +374,119 @@ class ChessEngine:
 
         movimientos_ordenados = self._evaluar_y_ordenar_movimientos(movimientos_legales)
         mejores_movimientos = []
-        
-        # Detectamos de qué color está jugando la IA
         soy_blancas = self.board.turn == chess.WHITE
-        
-        # INICIALIZACIÓN CORRECTA:
-        # Si somos blancas, partimos de -infinito para buscar la máxima puntuación
-        # Si somos negras, partimos de +infinito para buscar la mínima puntuación
         mejor_valor = -float('inf') if soy_blancas else float('inf')
         alfa = -float('inf')
         beta = float('inf')
 
-        # ESCALADO DINÁMICO DE PROFUNDIDAD
-        material_tablero = sum(config.VALORES_PIEZAS.get(p.piece_type, 0) for p in self.board.piece_map().values())
-        profundidad_calculo = 5 if material_tablero < 2000 else 3
+        # ESCALADO DINÁMICO DE PROFUNDIDAD CORREGIDO
+        material_tablero = sum(
+            config.VALORES_PIEZAS.get(p.piece_type, 0) 
+            for p in self.board.piece_map().values() 
+            if p.piece_type != chess.KING
+        )
+        # Aumentamos el umbral a 4000 para contemplar escenarios con múltiples reinas coronadas
+        profundidad_calculo = 5 if material_tablero < 4000 else 3
+        
+        registro_rayos_x = {}
 
         for mov in movimientos_ordenados:
             self.board.push(mov)
-            # Evaluamos la rama pasando el turno al rival (not soy_blancas)
-            puntuacion_rama = self.minimax(3, not soy_blancas, alfa, beta) 
+            puntuacion_rama = self.minimax(profundidad_calculo, not soy_blancas, alfa, beta) 
             self.board.pop()
+            
+            registro_rayos_x[mov.uci()] = puntuacion_rama
 
             if soy_blancas:
-                # Las blancas MAXIMIZAN (buscan puntuaciones mayores)
                 if puntuacion_rama > mejor_valor:
                     mejor_valor = puntuacion_rama
-                    mejores_movimientos = [mov]
-                elif puntuacion_rama == mejor_valor:
-                    mejores_movimientos.append(mov)
+                    # Guardamos SOLO la que supere estrictamente el récord
+                    mejores_movimientos = [mov] 
                 alfa = max(alfa, puntuacion_rama)
             else:
-                # Las negras MINIMIZAN (buscan puntuaciones menores)
                 if puntuacion_rama < mejor_valor: 
                     mejor_valor = puntuacion_rama
-                    mejores_movimientos = [mov]
-                elif puntuacion_rama == mejor_valor:
-                    mejores_movimientos.append(mov)
+                    # Guardamos SOLO la que supere estrictamente el récord
+                    mejores_movimientos = [mov] 
                 beta = min(beta, puntuacion_rama)
 
-        # Mecanismo de seguridad
         if not mejores_movimientos:
             mejores_movimientos = [movimientos_ordenados[0]]
 
         movimiento_final = random.choice(mejores_movimientos)
         self.board.push(movimiento_final)
         
-        color_actual = "blancas" if soy_blancas else "negras"
-        color_rival = "negras" if soy_blancas else "blancas"
-        print(f"Movimiento de la IA ({color_actual}) realizado: {movimiento_final}. Turno de las {color_rival}.")
+        print("\n[RAYOS X] Ranking de jugadas evaluadas:")
+        movimientos_ordenados_x = sorted(registro_rayos_x.items(), key=lambda x: x[1], reverse=soy_blancas)
+        for mov_uci, punt in movimientos_ordenados_x:
+            marca = " <=== ELEGIDA" if mov_uci == movimiento_final.uci() else ""
+            print(f"Jugada {mov_uci}: {punt}{marca}")
+            
+        print(f"\nMovimiento de la IA realizado: {movimiento_final}.")
         return True
 
     def _evaluar_y_ordenar_movimientos(self, movimientos: List[chess.Move]) -> List[chess.Move]:
         """
         Ordena la lista de movimientos legales para optimizar la Poda Alfa-Beta.
-        Aplica MVV-LVA y la heurística "Desperado" (Morir matando).
+        Aplica MVV-LVA, heurística Desperado y protección extendida de piezas.
         """
-        def score_movimiento(mov: chess.Move) -> int:
-            puntuacion = 0
+        def score_movimiento(mov: chess.Move) -> float:
+            puntuacion = 0.0
             
-            # 1. TÁCTICA MVV-LVA (Víctima más valiosa - Atacante menos valioso)
+            # 1. TÁCTICA MVV-LVA Y CAPTURAS
             if self.board.is_capture(mov):
-                pieza_atacada = self.board.piece_at(mov.to_square)
-                pieza_atacante = self.board.piece_at(mov.from_square)
-                
-                if pieza_atacada and pieza_atacante:
-                    valor_victima = config.VALORES_PIEZAS.get(pieza_atacada.piece_type, 0)
-                    valor_atacante = config.VALORES_PIEZAS.get(pieza_atacante.piece_type, 0)
+                # Arreglo crítico: Las capturas al paso no tienen pieza en la casilla de destino
+                if self.board.is_en_passant(mov):
+                    puntuacion += 10000 
+                else:
+                    pieza_atacada = self.board.piece_at(mov.to_square)
+                    pieza_atacante = self.board.piece_at(mov.from_square)
                     
-                    # Priorizamos comer piezas caras con piezas baratas (Ej. Peón come Reina = +8900)
-                    puntuacion += 10000 + valor_victima - valor_atacante
+                    if pieza_atacada and pieza_atacante:
+                        valores = {chess.PAWN: 100, chess.KNIGHT: 300, chess.BISHOP: 300, 
+                                   chess.ROOK: 500, chess.QUEEN: 900, chess.KING: 90000}
+                        
+                        valor_victima = valores.get(pieza_atacada.piece_type, 0)
+                        valor_atacante = valores.get(pieza_atacante.piece_type, 0)
+                        
+                        puntuacion += 10000 + valor_victima - valor_atacante
 
-                    # 2. EL INSTINTO "MUERE MATANDO" (Desperado) - MEJORADO
-                    if self.board.is_attacked_by(not self.board.turn, mov.from_square):
-                        puntuacion += 5000
-                        # Bonus proporcional al valor de la víctima: prioriza cazar piezas caras
-                        puntuacion += valor_victima * 2
+                        # 2. EL INSTINTO "MUERE MATANDO"
+                        if self.board.is_attacked_by(not self.board.turn, mov.from_square):
+                            puntuacion += 5000 + (valor_victima * 2)
 
-            
             # 3. PROMOCIONES DE PEÓN
-            # Coronar una reina debe ser la máxima prioridad absoluta
             if mov.promotion == chess.QUEEN:
                 puntuacion += 9000
                 
-            # 4. JAQUES Y TENEDORES AL REY
-            # Simulamos el movimiento para ver si da jaque
+            # 4. JAQUES AL REY
             self.board.push(mov)
             if self.board.is_check():
-                # Forzamos a la IA a investigar todos los jaques al principio de su cálculo
                 puntuacion += 2000
             self.board.pop()
             
-            # 5. PENALIZACIÓN: No mover la reina a una casilla atacada por el rival
+            # 5. PENALIZACIÓN DE SEGURIDAD EXTENDIDA
             pieza_origen = self.board.piece_at(mov.from_square)
-            if pieza_origen and pieza_origen.piece_type == chess.QUEEN:
+            if pieza_origen:
                 self.board.push(mov)
+                # Evaluamos si la casilla destino está controlada por el enemigo
                 if self.board.is_attacked_by(self.board.turn, mov.to_square):
-                    puntuacion -= 8000  # Coste catastrófico
+                    if pieza_origen.piece_type == chess.QUEEN:
+                        puntuacion -= 8000  # Castigo catastrófico
+                    elif pieza_origen.piece_type in [chess.KNIGHT, chess.BISHOP, chess.ROOK]:
+                        puntuacion -= 1000  # Castigo severo por regalar piezas menores
                 self.board.pop()
+
+            # 6. BONIFICACIÓN DE CENTRALIZACIÓN (Desempate de movimientos silenciosos)
+            # Si el movimiento no es una captura ni un jaque, le damos prioridad
+            # a las piezas que se muevan hacia el centro del tablero.
+            if puntuacion == 0.0:
+                fila_destino = chess.square_rank(mov.to_square)
+                col_destino = chess.square_file(mov.to_square)
+                # Distancia matemática al centro exacto del tablero (3.5, 3.5)
+                distancia_centro = abs(3.5 - col_destino) + abs(3.5 - fila_destino)
+                # Las casillas centrales obtienen más decimales positivos (ej. +0.35)
+                puntuacion += (7.0 - distancia_centro) * 0.05
 
             return puntuacion
 

@@ -19,7 +19,7 @@ def main():
     apertura_a_entrenar = ""
 
     # Define aquí qué apertura quieres construir en el tablero paso a paso
-    apertura_a_entrenar = "Siciliana: Variante Dragón"
+    # apertura_a_entrenar = "Siciliana: Variante Dragón"
 
     # Descomentar esta línea para arrancar directamente en la variante que quieras auditar:
     #motor.forzar_inicio_teorico("Siciliana: Variante Dragón")
