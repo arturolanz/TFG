@@ -35,6 +35,15 @@ def main():
     partida_finalizada = False
     mensaje_final = "" # Aquí guardaremos el texto dinámico
 
+    ocultar_cartel_final = False  # <--- AÑADIDO: Reseteamos la visibilidad del cartel
+
+    # ---> NUEVO: Variables para la paginación del historial <---
+    # Variables de la ventana deslizante
+    indice_historial = 0
+    movimientos_previos = 0
+    rect_btn_izq = pygame.Rect(0,0,0,0)
+    rect_btn_der = pygame.Rect(0,0,0,0)
+
     # =================================================================
     # NUEVO: MOSTRAR MENÚ DE SELECCIÓN DE COLOR ANTES DE INICIAR
     # =================================================================
@@ -48,81 +57,97 @@ def main():
 
     # 2. BUCLE PRINCIPAL DEL JUEGO
     while corriendo:
-    # --- GESTIÓN DE EVENTOS (Turno del Humano) ---
+        # --- GESTIÓN DE EVENTOS ---
         for e in pygame.event.get():
             if e.type == pygame.QUIT:
                 corriendo = False
 
             # --- EVENTOS DE RATÓN --- #
-            # Bloqueamos los clics del usuario si la partida ya ha finalizado o si la máquina está pensando
-            elif e.type == pygame.MOUSEBUTTONDOWN and not partida_finalizada and not estado_ia["calculando"]:
-                ubicacion = pygame.mouse.get_pos()
-                col = ubicacion[0] // interfaz.TAM_CASILLA
-                fil = ubicacion[1] // interfaz.TAM_CASILLA
+            elif e.type == pygame.MOUSEBUTTONDOWN:
+                if partida_finalizada:
+                    ocultar_cartel_final = True 
                 
-                casilla_clic_sq = chess.square(col, 7-fil)
-                pieza = motor.pieza_en(casilla_clic_sq)
-
-                # MODIFICADO: Adaptamos el clic según la perspectiva del color elegido
-                if color_humano == chess.WHITE:
-                    casilla_clic_sq = chess.square(col, 7-fil)
-                else:
-                    casilla_clic_sq = chess.square(7-col, fil)
+                # 1. Clic en los botones de navegación del historial
+                elif rect_btn_izq.collidepoint(e.pos):
+                    indice_historial -= 1
+                elif rect_btn_der.collidepoint(e.pos):
+                    indice_historial += 1
                 
-                pieza = motor.pieza_en(casilla_clic_sq)
-
-                # LÓGICA DE SELECCIÓN INTELIGENTE
-                if pieza and pieza.color == motor.turno_actual():
-                    casilla_seleccionada = (fil, col)
-                    casilla_sq_seleccionada = casilla_clic_sq
-                    movimientos_validos = motor.movimientos_validos_desde(casilla_clic_sq)
-                
-                elif casilla_sq_seleccionada is not None:
-                    exito = motor.intentar_movimiento(casilla_sq_seleccionada, casilla_clic_sq)
+                # 2. Clics en el entorno de juego
+                elif not estado_ia["calculando"]:
+                    ubicacion = pygame.mouse.get_pos()
+                    col = ubicacion[0] // interfaz.TAM_CASILLA
+                    fil = ubicacion[1] // interfaz.TAM_CASILLA
                     
-                    if exito:
-                        print("Movimiento realizado. Turno de las negras.")
+                    # --- BARRERA MATEMÁTICA ABSOLUTA ---
+                    # Solo procesamos la lógica si el clic cayó en la cuadrícula 8x8
+                    if 0 <= col <= 7 and 0 <= fil <= 7:
+                        
+                        # Adaptamos el clic según la perspectiva
+                        if color_humano == chess.WHITE:
+                            casilla_clic_sq = chess.square(col, 7-fil)
+                        else:
+                            casilla_clic_sq = chess.square(7-col, fil)
+                        
+                        pieza = motor.pieza_en(casilla_clic_sq)
+
+                        # LÓGICA DE SELECCIÓN INTELIGENTE
+                        if pieza and pieza.color == motor.turno_actual():
+                            casilla_seleccionada = (fil, col)
+                            casilla_sq_seleccionada = casilla_clic_sq
+                            movimientos_validos = motor.movimientos_validos_desde(casilla_clic_sq)
+                        
+                        elif casilla_sq_seleccionada is not None:
+                            exito = motor.intentar_movimiento(casilla_sq_seleccionada, casilla_clic_sq)
+                            if exito:
+                                print("Movimiento realizado.")
+                            
+                            # Limpiamos variables tras el intento
+                            casilla_seleccionada = ()
+                            casilla_sq_seleccionada = None
+                            movimientos_validos = []
                     
-                    casilla_seleccionada = ()
-                    casilla_sq_seleccionada = None
-                    movimientos_validos = []
+                    # Si el clic cae fuera del 8x8 (ej. en el panel lateral)
+                    else:
+                        casilla_seleccionada = ()
+                        casilla_sq_seleccionada = None
+                        movimientos_validos = []
 
             # --- EVENTOS DE TECLADO --- #
             elif e.type == pygame.KEYDOWN:
-                # Si pulsamos la tecla 'R' Y la partida ha terminado
                 if e.key == pygame.K_r:
-                    # 1. Reiniciamos la lógica del motor
+                    motor.abortar_calculo = True
                     motor.reiniciar_juego()
-                    
-                    # ---> NUEVO: Volvemos a lanzar el menú flotante para elegir bando <---
                     color_humano = interfaz.pantalla_seleccion_color(pantalla, reloj, interfaz.ANCHO, interfaz.ALTO)
-                    
-                    # 2. Limpiamos todas las variables de control visual
                     partida_finalizada = False
                     mensaje_final = ""
                     casilla_seleccionada = ()
                     casilla_sq_seleccionada = None
                     movimientos_validos = []
-                    
                     print("\n--- PARTIDA REINICIADA ---")
 
-                # ---> NUEVO: BOTÓN DE DEPURACIÓN (P) <---
                 elif e.key == pygame.K_p:
                     print("\n--- HISTORIAL DE LA PARTIDA (EN CURSO) ---")
-                    # Extraemos la partida directamente desde la memoria del tablero
                     juego_actual = chess.pgn.Game.from_board(motor.board)
                     print(juego_actual)
                     print("------------------------------------------\n")
 
+                elif e.key == pygame.K_LEFT:
+                    indice_historial -= 1
+                elif e.key == pygame.K_RIGHT:
+                    indice_historial += 1
+
+        # ---> Salto automático al último movimiento <---
+        if len(tablero_visual.move_stack) != movimientos_previos:
+            indice_historial = 9999 
+            movimientos_previos = len(tablero_visual.move_stack)
+
         # --- COMPROBACIÓN GENERAL DE FIN DE PARTIDA ---
         if not estado_ia["calculando"] and motor.juego_terminado() and not partida_finalizada:
             partida_finalizada = True
-            
             resultado_pgn = "*"
 
-            # Analizamos la causa exacta del fin de partida para el cartel
             if motor.board.is_checkmate():
-                # Si es jaque mate, gana el jugador que NO tiene el turno actual
                 if motor.board.turn == chess.WHITE:
                     mensaje_final = "¡JAQUE MATE! Ganan las Negras"
                     resultado_pgn = "0-1"
@@ -140,12 +165,14 @@ def main():
                 resultado_pgn = "1/2-1/2"
                 
             print(f"\n{mensaje_final}")
-
             motor.guardar_partida_pgn(resultado_pgn, color_humano)
 
         # --- LÓGICA DE LA IA (Turno de la Máquina) ---
+        # (Aquí mantienes tu código de la IA exactamente como lo tienes)
+        # --- LÓGICA DE LA IA (Turno de la Máquina) ---
         if not estado_ia["calculando"] and motor.turno_actual() != color_humano and not partida_finalizada:
             
+            motor.abortar_calculo = False  # <--- NUEVO: Bajamos la bandera
             estado_ia["calculando"] = True # Bloqueamos para no lanzar 100 hilos
             print("La IA esta pensando en segundo plano...") # ¡Corregido el print!
             
@@ -161,11 +188,16 @@ def main():
             pygame.time.delay(10) 
 
             def tarea_pensar():
-                # Esta es la única vez que se llama al motor
-                motor.hacer_movimiento_inteligente(apertura_a_entrenar)
-                estado_ia["calculando"] = False # Libera el candado al terminar
-                print("Movimiento de la IA realizado.") # Avisa cuando de verdad acaba
-                
+                try:
+                    motor.hacer_movimiento_inteligente(apertura_a_entrenar)
+                except IndexError:
+                    # Si el tablero se resetea (tecla R) mientras la IA calcula, 
+                    # el pop() dará error. Lo capturamos y matamos el hilo limpiamente.
+                    print("\n[SISTEMA] Cálculo de IA abortado por reinicio de partida.")
+                finally:
+                    # Aseguramos que la bandera se baje siempre, haya explotado o no
+                    estado_ia["calculando"] = False    
+            
             # Lanzamos el hilo. El daemon=True hace que muera si cerramos la ventana
             hilo_ia = threading.Thread(target=tarea_pensar)
             hilo_ia.daemon = True 
@@ -175,29 +207,47 @@ def main():
             casilla_seleccionada = ()
             casilla_sq_seleccionada = None
             movimientos_validos = []
+
+        # ---> NUEVO: Salto automático al último movimiento <---
+        if len(tablero_visual.move_stack) != movimientos_previos:
+            indice_historial = 9999  # Forzamos un número alto para que baje al tope
+            movimientos_previos = len(tablero_visual.move_stack)
        
-        # 3. RENDERIZADO VISUAL (Se ejecuta en cada frame)
+# 3. RENDERIZADO VISUAL (Se ejecuta en cada frame)
         interfaz.dibujar_tablero(pantalla)
         interfaz.dibujar_coordenadas(pantalla, color_humano)
+        interfaz.dibujar_panel_lateral(pantalla, tablero_visual, color_humano)
+        
+        # Llamada ÚNICA al historial interactivo (que incluye el recuadro verde)
+        indice_historial, rect_btn_izq, rect_btn_der = interfaz.dibujar_historial_movimientos(
+            pantalla, tablero_visual, indice_historial
+        )
+        
         interfaz.resaltar_casillas(pantalla, casilla_seleccionada, movimientos_validos, color_humano)
 
-        # 2. Actualizamos la "foto" SOLO si la IA ha terminado de pensar y el motor está libre
+        # 2. Actualizamos la "foto" SOLO si la IA ha terminado de pensar
         if not estado_ia["calculando"]:
             tablero_visual = motor.board.copy()
             nombre_apertura_cache = motor.obtener_nombre_apertura()
             mov_sugerido_cache = motor.obtener_siguiente_movimiento_guia(apertura_a_entrenar)
 
+        interfaz.dibujar_efectos_visuales(pantalla, tablero_visual, interfaz.TAM_CASILLA, color_humano)
         interfaz.resaltar_guia_teorica(pantalla, mov_sugerido_cache, color_humano)
-        
-        # 3. Dibujamos LA FOTO ESTÁTICA, nunca el motor.board directamente
         interfaz.dibujar_piezas(pantalla, tablero_visual, color_humano)
-        interfaz.dibujar_barra_estado(pantalla, nombre_apertura_cache)
-
-        # SI LA PARTIDA HA TERMINADO, PINTAMOS EL CARTEL EN INTERFAZ
+        
+        # ==========================================================
+        # ESTADOS DE FIN DE PARTIDA: FOCO, BARRA Y CARTEL
+        # ==========================================================
         if partida_finalizada:
-            interfaz.mostrar_mensaje_final(pantalla, mensaje_final)
+            interfaz.dibujar_foco_teatral(pantalla, tablero_visual, interfaz.TAM_CASILLA, color_humano)
+            texto_permanente = f"{mensaje_final}  |  Pulsa 'R' para reiniciar"
+            interfaz.dibujar_barra_estado(pantalla, texto_permanente, es_final=True)
+            
+            if not ocultar_cartel_final:
+                interfaz.mostrar_mensaje_final(pantalla, mensaje_final)
+        else:
+            interfaz.dibujar_barra_estado(pantalla, nombre_apertura_cache, es_final=False)
 
-        # Actualiza la ventana completa
         pygame.display.flip()
         reloj.tick(interfaz.MAX_FPS)
 
