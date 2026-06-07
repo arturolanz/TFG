@@ -4,6 +4,6 @@
 [Round "?"]
 [White "Humano"]
 [Black "IA Minimax"]
-[Result "0-1"]
+[Result "Manual"]
 
-1. g4 e5 2. f4 Qh4# 0-1
+Manual

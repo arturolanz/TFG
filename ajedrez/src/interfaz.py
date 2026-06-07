@@ -400,21 +400,20 @@ def dibujar_panel_lateral(pantalla, tablero, color_humano):
             
             clave = miniatura[0].lower() + miniatura[1].lower()
             if clave in PIEZAS:
-                # Aumentamos de (20, 20) a (26, 26)
-                img_mini = pygame.transform.smoothscale(PIEZAS[clave], (26, 26))
-                pantalla.blit(img_mini, (x_actual, y_inicio - 3))
+                # Aumentamos el tamaño a 32x32 y subimos un poco la Y (-6) para centrar
+                img_mini = pygame.transform.smoothscale(PIEZAS[clave], (32, 32))
+                pantalla.blit(img_mini, (x_actual, y_inicio - 6))
             
-            # Aumentamos el espaciado para que respiren más
-            x_actual += 10
+            x_actual += 12 # Separamos un par de píxeles más para compensar el tamaño
 
     # ¡Ambas barras juntas en la zona superior!
     renderizar_bloque(piezas_top, texto_ventaja_top, y_inicio=20)
     renderizar_bloque(piezas_bot, texto_ventaja_bot, y_inicio=60)
 
-def dibujar_historial_movimientos(pantalla, tablero, indice_scroll, y_inicio=110):
+def dibujar_historial_movimientos(pantalla, tablero_real, offset_visual, y_inicio=110):
     """
-    Dibuja un historial tabular estilo chess.com en la zona inferior derecha,
-    resaltando en verde la última jugada realizada.
+    Historial que sigue la jugada seleccionada en verde.
+    Las flechas de navegación ahora están ancladas de forma relativa debajo de la tabla.
     """
     import pygame
     import chess
@@ -422,22 +421,19 @@ def dibujar_historial_movimientos(pantalla, tablero, indice_scroll, y_inicio=110
     pygame.font.init()
     fuente_texto = pygame.font.SysFont("Helvetica", 14, bold=True)
     fuente_num = pygame.font.SysFont("Helvetica", 14)
-
     x_base = ANCHO_TABLERO
     
-    # 1. Fondo exclusivo del historial
+    # Fondo del historial
     pygame.draw.rect(pantalla, (30, 28, 25), (x_base, y_inicio, ANCHO_PANEL, ALTO - y_inicio))
     pygame.draw.line(pantalla, (50, 50, 50), (x_base, y_inicio), (ANCHO, y_inicio), 2)
 
-    # 2. Traducción a SAN (Notación Algebraica Estándar) en Español
     tablero_fantasma = chess.Board()
     movimientos_san = []
-    for mov in tablero.move_stack:
+    for mov in tablero_real.move_stack:
         movimientos_san.append(tablero_fantasma.san(mov))
         tablero_fantasma.push(mov)
 
     traduccion_es = str.maketrans("KQRBN", "RDTAC")
-
     textos_historial = []
     for i in range(0, len(movimientos_san), 2):
         turno_num = (i // 2) + 1
@@ -445,53 +441,47 @@ def dibujar_historial_movimientos(pantalla, tablero, indice_scroll, y_inicio=110
         mov_n = movimientos_san[i+1].translate(traduccion_es) if i + 1 < len(movimientos_san) else ""
         textos_historial.append((turno_num, mov_b, mov_n))
 
-    # 3. Matemáticas de la ventana visible
+    total_movimientos = len(movimientos_san)
+    indice_observado = total_movimientos - 1 + offset_visual
+    
     max_lineas = 6 
-    total_turnos = len(textos_historial)
-    indice_scroll = max(0, min(indice_scroll, total_turnos - max_lineas))
+    total_filas = len(textos_historial)
+    
+    if total_filas > 0:
+        fila_observada = max(0, indice_observado // 2)
+        indice_scroll = max(0, fila_observada - (max_lineas // 2))
+        indice_scroll = min(indice_scroll, max(0, total_filas - max_lineas))
+    else:
+        indice_scroll = 0
+
     lineas_visibles = textos_historial[indice_scroll : indice_scroll + max_lineas]
 
-    # 4. Renderizado en Columnas con Resalte Verde
     y_actual = y_inicio
     alto_fila = 26
-    
-    # Identificadores para pintar la casilla verde
-    ultimo_idx_absoluto = len(textos_historial) - 1
-    es_turno_blancas_ultimo = (len(movimientos_san) % 2 != 0)
 
     for i, (turno, mov_b, mov_n) in enumerate(lineas_visibles):
-        # Índice real del turno en la partida completa
-        idx_real = indice_scroll + i
-        
-        # Efecto "Cebra" para las filas
+        idx_real_fila = indice_scroll + i
         color_fila = (40, 38, 35) if i % 2 == 0 else (34, 32, 29)
         pygame.draw.rect(pantalla, color_fila, (x_base, y_actual, ANCHO_PANEL, alto_fila))
 
-        # ---> NUEVO: Pintar recuadro verde si es la última jugada <---
-        if idx_real == ultimo_idx_absoluto and len(movimientos_san) > 0:
-            color_resalte = (86, 126, 58) # Verde sutil estilo ajedrez
-            if es_turno_blancas_ultimo:
-                # Resaltar la columna de las blancas
-                pygame.draw.rect(pantalla, color_resalte, (x_base + 45, y_actual + 2, 60, 22), border_radius=4)
-            else:
-                # Resaltar la columna de las negras
-                pygame.draw.rect(pantalla, color_resalte, (x_base + 110, y_actual + 2, 60, 22), border_radius=4)
+        if idx_real_fila * 2 == indice_observado: 
+            pygame.draw.rect(pantalla, (86, 126, 58), (x_base + 45, y_actual + 2, 60, 22), border_radius=4)
+        elif idx_real_fila * 2 + 1 == indice_observado: 
+            pygame.draw.rect(pantalla, (86, 126, 58), (x_base + 110, y_actual + 2, 60, 22), border_radius=4)
 
-        # Textos de la tabla
         pantalla.blit(fuente_num.render(f"{turno}.", True, (130, 130, 130)), (x_base + 10, y_actual + 5))
         pantalla.blit(fuente_texto.render(mov_b, True, (240, 240, 240)), (x_base + 50, y_actual + 5))
         if mov_n:
             pantalla.blit(fuente_texto.render(mov_n, True, (240, 240, 240)), (x_base + 115, y_actual + 5))
-
         y_actual += alto_fila
 
-    # 5. Botones de navegación interactivos
-    y_botones = ALTO - 45
+    # Botones de flechas fijados matemáticamente debajo de las 6 líneas
+    y_botones = y_inicio + (max_lineas * alto_fila) + 15
     rect_izq = pygame.Rect(x_base + 25, y_botones, 55, 30)
     rect_der = pygame.Rect(x_base + 100, y_botones, 55, 30)
 
-    color_btn_izq = (60, 60, 60) if indice_scroll > 0 else (40, 40, 40)
-    color_btn_der = (60, 60, 60) if indice_scroll < total_turnos - max_lineas else (40, 40, 40)
+    color_btn_izq = (60, 60, 60) if abs(offset_visual) < total_movimientos else (40, 40, 40)
+    color_btn_der = (60, 60, 60) if offset_visual < 0 else (40, 40, 40)
 
     pygame.draw.rect(pantalla, color_btn_izq, rect_izq, border_radius=5)
     pygame.draw.rect(pantalla, color_btn_der, rect_der, border_radius=5)
@@ -500,4 +490,35 @@ def dibujar_historial_movimientos(pantalla, tablero, indice_scroll, y_inicio=110
     pantalla.blit(fuente_flechas.render("<", True, (200, 200, 200)), (rect_izq.centerx - 5, rect_izq.centery - 8))
     pantalla.blit(fuente_flechas.render(">", True, (200, 200, 200)), (rect_der.centerx - 5, rect_der.centery - 8))
 
-    return indice_scroll, rect_izq, rect_der
+    return offset_visual, rect_izq, rect_der
+
+
+def dibujar_botones_admin(pantalla, apertura_actual, y_inicio=340):
+    """
+    Dibuja los botones en la base del panel, separados del historial.
+    """
+    import pygame
+    pygame.font.init()
+    fuente = pygame.font.SysFont("Helvetica", 12, bold=True)
+    x_base = ANCHO_TABLERO + 15
+
+    # 1. Botón Guardar PGN (Fijado en y=340)
+    rect_pgn = pygame.Rect(x_base, y_inicio, 150, 30)
+    pygame.draw.rect(pantalla, (60, 60, 60), rect_pgn, border_radius=4)
+    texto_pgn = fuente.render("Descargar PGN", True, (240, 240, 240))
+    pantalla.blit(texto_pgn, (x_base + 32, y_inicio + 8))
+
+    # 2. Botón Apertura (Desplazado matemáticamente hacia abajo)
+    y_btn_2 = y_inicio + 40
+    rect_ap = pygame.Rect(x_base, y_btn_2, 150, 30)
+    color_ap = (86, 126, 58) if apertura_actual else (60, 60, 60)
+    pygame.draw.rect(pantalla, color_ap, rect_ap, border_radius=4)
+    
+    etiqueta = apertura_actual if apertura_actual else "Elegir Apertura"
+    if len(etiqueta) > 18:
+        etiqueta = etiqueta[:16] + "..."
+        
+    texto_ap = fuente.render(etiqueta, True, (240, 240, 240))
+    pantalla.blit(texto_ap, (x_base + 10, y_btn_2 + 8)) 
+
+    return rect_pgn, rect_ap

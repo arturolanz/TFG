@@ -39,10 +39,12 @@ def main():
 
     # ---> NUEVO: Variables para la paginación del historial <---
     # Variables de la ventana deslizante
-    indice_historial = 0
+    offset_visual = 0
     movimientos_previos = 0
-    rect_btn_izq = pygame.Rect(0,0,0,0)
-    rect_btn_der = pygame.Rect(0,0,0,0)
+    rect_btn_izq = pygame.Rect(0, 0, 0, 0)
+    rect_btn_der = pygame.Rect(0, 0, 0, 0)
+    rect_btn_pgn = pygame.Rect(0, 0, 0, 0)      # <--- NUEVO
+    rect_btn_apertura = pygame.Rect(0, 0, 0, 0) # <--- NUEVO
 
     # =================================================================
     # NUEVO: MOSTRAR MENÚ DE SELECCIÓN DE COLOR ANTES DE INICIAR
@@ -50,6 +52,7 @@ def main():
     color_humano = interfaz.pantalla_seleccion_color(pantalla, reloj, interfaz.ANCHO, interfaz.ALTO)
 
     # ---> VARIABLES CACHÉ PARA EVITAR LA CONDICIÓN DE CARRERA <---
+    tablero_base_seguro = motor.board.copy()
     tablero_visual = motor.board.copy()
     nombre_apertura_cache = "Posición Inicial"
     mov_sugerido_cache = None
@@ -67,14 +70,35 @@ def main():
                 if partida_finalizada:
                     ocultar_cartel_final = True 
                 
-                # 1. Clic en los botones de navegación del historial
+                # 1. Viaje en el tiempo (Clic botones)
                 elif rect_btn_izq.collidepoint(e.pos):
-                    indice_historial -= 1
+                    # No podemos retroceder más allá de la jugada 1
+                    offset_visual = max(-len(motor.board.move_stack), offset_visual - 1)
                 elif rect_btn_der.collidepoint(e.pos):
-                    indice_historial += 1
+                    # No podemos avanzar más allá del presente (0)
+                    offset_visual = min(0, offset_visual + 1)
                 
+                # ---> NUEVO: Clics de Administración <---
+                elif rect_btn_pgn.collidepoint(e.pos):
+                    # Forzamos un guardado manual de la partida al instante
+                    motor.guardar_partida_pgn(resultado_pgn, color_humano, es_manual=True)
+                    print("\n[SISTEMA] Partida descargada en /docs/partidas_descargadas")
+
+                elif rect_btn_apertura.collidepoint(e.pos):
+                    # El motor se encarga de todo el proceso de pedir y validar
+                    nueva_apertura = motor.solicitar_apertura_usuario()
+                    
+                    if nueva_apertura:
+                        apertura_a_entrenar = nueva_apertura
+                        # Forzamos la actualización inmediata del motor
+                        motor.reiniciar_juego()
+                        motor.forzar_inicio_teorico(nueva_apertura)
+                        tablero_base_seguro = motor.board.copy() # Sincronizamos la foto blindada
+                        offset_visual = 0 # Volvemos al presente al cambiar de apertura
+                        print(f"\n[SISTEMA] Apertura cargada: {apertura_a_entrenar}")
+
                 # 2. Clics en el entorno de juego
-                elif not estado_ia["calculando"]:
+                elif not estado_ia["calculando"] and offset_visual == 0:
                     ubicacion = pygame.mouse.get_pos()
                     col = ubicacion[0] // interfaz.TAM_CASILLA
                     fil = ubicacion[1] // interfaz.TAM_CASILLA
@@ -100,6 +124,9 @@ def main():
                         elif casilla_sq_seleccionada is not None:
                             exito = motor.intentar_movimiento(casilla_sq_seleccionada, casilla_clic_sq)
                             if exito:
+                                offset_visual = 0
+                                # ---> LA CURA: Obligamos a la foto a actualizarse al instante
+                                tablero_base_seguro = motor.board.copy() 
                                 print("Movimiento realizado.")
                             
                             # Limpiamos variables tras el intento
@@ -133,14 +160,9 @@ def main():
                     print("------------------------------------------\n")
 
                 elif e.key == pygame.K_LEFT:
-                    indice_historial -= 1
+                    offset_visual = max(-len(motor.board.move_stack), offset_visual - 1)
                 elif e.key == pygame.K_RIGHT:
-                    indice_historial += 1
-
-        # ---> Salto automático al último movimiento <---
-        if len(tablero_visual.move_stack) != movimientos_previos:
-            indice_historial = 9999 
-            movimientos_previos = len(tablero_visual.move_stack)
+                    offset_visual = min(0, offset_visual + 1)
 
         # --- COMPROBACIÓN GENERAL DE FIN DE PARTIDA ---
         if not estado_ia["calculando"] and motor.juego_terminado() and not partida_finalizada:
@@ -165,7 +187,7 @@ def main():
                 resultado_pgn = "1/2-1/2"
                 
             print(f"\n{mensaje_final}")
-            motor.guardar_partida_pgn(resultado_pgn, color_humano)
+            motor.guardar_partida_pgn(resultado_pgn, color_humano, es_manual=False)
 
         # --- LÓGICA DE LA IA (Turno de la Máquina) ---
         # (Aquí mantienes tu código de la IA exactamente como lo tienes)
@@ -193,7 +215,7 @@ def main():
                 except IndexError:
                     # Si el tablero se resetea (tecla R) mientras la IA calcula, 
                     # el pop() dará error. Lo capturamos y matamos el hilo limpiamente.
-                    print("\n[SISTEMA] Cálculo de IA abortado por reinicio de partida.")
+                    print("\n[SISTEMA] Calculo de IA abortado por reinicio de partida.")
                 finally:
                     # Aseguramos que la bandera se baje siempre, haya explotado o no
                     estado_ia["calculando"] = False    
@@ -208,35 +230,58 @@ def main():
             casilla_sq_seleccionada = None
             movimientos_validos = []
 
-        # ---> NUEVO: Salto automático al último movimiento <---
-        if len(tablero_visual.move_stack) != movimientos_previos:
-            indice_historial = 9999  # Forzamos un número alto para que baje al tope
-            movimientos_previos = len(tablero_visual.move_stack)
-       
-# 3. RENDERIZADO VISUAL (Se ejecuta en cada frame)
-        interfaz.dibujar_tablero(pantalla)
-        interfaz.dibujar_coordenadas(pantalla, color_humano)
-        interfaz.dibujar_panel_lateral(pantalla, tablero_visual, color_humano)
-        
-        # Llamada ÚNICA al historial interactivo (que incluye el recuadro verde)
-        indice_historial, rect_btn_izq, rect_btn_der = interfaz.dibujar_historial_movimientos(
-            pantalla, tablero_visual, indice_historial
-        )
-        
-        interfaz.resaltar_casillas(pantalla, casilla_seleccionada, movimientos_validos, color_humano)
+        """
+        # ---> SALTO AUTOMÁTICO AL ÚLTIMO MOVIMIENTO <---
+        # Usamos la foto segura para saber si hay una jugada nueva de verdad
+        if len(tablero_base_seguro.move_stack) != movimientos_previos:
+            offset_visual = 0  # Forzamos la vuelta al presente
+            movimientos_previos = len(tablero_base_seguro.move_stack)
+        """
 
-        # 2. Actualizamos la "foto" SOLO si la IA ha terminado de pensar
+        # ==========================================================
+        # 1. ACTUALIZACIÓN DEL ESTADO VISUAL (EL CORTAFUEGOS)
+        # ==========================================================
+        # Solo tomamos una nueva foto de la realidad si la IA NO está tocando el motor
         if not estado_ia["calculando"]:
-            tablero_visual = motor.board.copy()
+            tablero_base_seguro = motor.board.copy()
             nombre_apertura_cache = motor.obtener_nombre_apertura()
             mov_sugerido_cache = motor.obtener_siguiente_movimiento_guia(apertura_a_entrenar)
 
+        # ---> EL VIAJE EN EL TIEMPO (Siempre activo) <---
+        # Generamos la foto visual a partir de la foto blindada, haya IA pensando o no
+        tablero_visual = tablero_base_seguro.copy()
+        for _ in range(abs(offset_visual)):
+            if tablero_visual.move_stack:
+                tablero_visual.pop()
+
+        # ==========================================================
+        # 2. RENDERIZADO VISUAL (Capas de abajo hacia arriba)
+        # ==========================================================
+        interfaz.dibujar_tablero(pantalla)
+        interfaz.dibujar_coordenadas(pantalla, color_humano)
+        
+        # El panel lateral usa el tablero_visual para mostrar las piezas de esa época
+        interfaz.dibujar_panel_lateral(pantalla, tablero_visual, color_humano)
+        
+        # ¡Llamadas limpias! Las funciones ya traen sus alturas blindadas de serie
+        offset_visual, rect_btn_izq, rect_btn_der = interfaz.dibujar_historial_movimientos(
+            pantalla, tablero_base_seguro, offset_visual
+        )
+        
+        rect_btn_pgn, rect_btn_apertura = interfaz.dibujar_botones_admin(
+            pantalla, apertura_a_entrenar
+        )
+        
+        interfaz.resaltar_casillas(pantalla, casilla_seleccionada, movimientos_validos, color_humano)
         interfaz.dibujar_efectos_visuales(pantalla, tablero_visual, interfaz.TAM_CASILLA, color_humano)
-        interfaz.resaltar_guia_teorica(pantalla, mov_sugerido_cache, color_humano)
+        
+        if offset_visual == 0:
+            interfaz.resaltar_guia_teorica(pantalla, mov_sugerido_cache, color_humano)
+            
         interfaz.dibujar_piezas(pantalla, tablero_visual, color_humano)
         
         # ==========================================================
-        # ESTADOS DE FIN DE PARTIDA: FOCO, BARRA Y CARTEL
+        # 3. ESTADOS DE FIN DE PARTIDA: FOCO, BARRA Y CARTEL
         # ==========================================================
         if partida_finalizada:
             interfaz.dibujar_foco_teatral(pantalla, tablero_visual, interfaz.TAM_CASILLA, color_humano)
@@ -247,6 +292,14 @@ def main():
                 interfaz.mostrar_mensaje_final(pantalla, mensaje_final)
         else:
             interfaz.dibujar_barra_estado(pantalla, nombre_apertura_cache, es_final=False)
+
+        # ---> CORRECCIÓN: Si el usuario ha forzado un reinicio de apertura <---
+        # Nos aseguramos de que tablero_visual siempre sea una copia limpia 
+        # de la base segura, sin importar si la IA está pensando.
+        tablero_visual = tablero_base_seguro.copy()
+        for _ in range(abs(offset_visual)):
+            if tablero_visual.move_stack:
+                tablero_visual.pop()
 
         pygame.display.flip()
         reloj.tick(interfaz.MAX_FPS)

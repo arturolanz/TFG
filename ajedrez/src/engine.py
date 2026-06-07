@@ -620,44 +620,67 @@ class ChessEngine:
                 
         return None
 
-    def guardar_partida_pgn(self, resultado_str: str, color_humano: chess.Color) -> None:
+    def guardar_partida_pgn(self, resultado_str: str, color_humano: chess.Color, es_manual: bool = False) -> None:
         """
-        Exporta la partida actual a formato estándar PGN para su posterior análisis.
-        Mantiene un sistema de rotación que elimina partidas viejas, dejando solo las 5 últimas.
+        Exporta la partida a formato PGN.
+        - Si es_manual=False: Va a logs_partidas (rotación de 5).
+        - Si es_manual=True: Va a partidas_descargadas (sin límite).
         """
-        directorio_logs = "logs_partidas"
-        if not os.path.exists(directorio_logs):
-            os.makedirs(directorio_logs)
-
-        # 1. Creamos el archivo de partida desde el historial del tablero
-        juego_pgn = chess.pgn.Game.from_board(self.board)
+        # 1. Definimos rutas basadas en el modo
+        carpeta_base = "../docs"
+        sub_carpeta = "partidas_descargadas" if es_manual else "logs_partidas"
+        directorio_final = os.path.join(carpeta_base, sub_carpeta)
         
-        # 2. Añadimos metadatos (Cabeceras)
-        juego_pgn.headers["Event"] = "Auditoría TFG - Pruebas de Motor"
+        if not os.path.exists(directorio_final):
+            os.makedirs(directorio_final)
+
+        # 2. Construcción del PGN
+        juego_pgn = chess.pgn.Game.from_board(self.board)
+        juego_pgn.headers["Event"] = "Manual Export" if es_manual else "Auditoría TFG"
         juego_pgn.headers["Date"] = datetime.datetime.now().strftime("%Y.%m.%d")
         juego_pgn.headers["White"] = "Humano" if color_humano == chess.WHITE else "IA Minimax"
         juego_pgn.headers["Black"] = "IA Minimax" if color_humano == chess.WHITE else "Humano"
         juego_pgn.headers["Result"] = resultado_str
 
-        # 3. Guardamos el archivo con la marca de tiempo exacta
+        # 3. Guardado
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        ruta_archivo = os.path.join(directorio_logs, f"partida_{timestamp}.pgn")
+        ruta_archivo = os.path.join(directorio_final, f"partida_{timestamp}.pgn")
         
         with open(ruta_archivo, "w", encoding="utf-8") as f:
             f.write(str(juego_pgn))
-            
+                
         print(f"\n[SISTEMA] Partida guardada en: {ruta_archivo}")
 
-        # 4. SISTEMA DE ROTACIÓN (Mantener solo las 5 más recientes)
-        archivos_pgn = glob.glob(os.path.join(directorio_logs, "*.pgn"))
-        # Ordenamos de más antiguo a más nuevo basándonos en la fecha de creación
-        archivos_pgn.sort(key=os.path.getctime) 
+        # 4. Rotación SOLO si es log automático
+        if not es_manual:
+            archivos_pgn = glob.glob(os.path.join(directorio_final, "*.pgn"))
+            archivos_pgn.sort(key=os.path.getctime) 
+            
+            while len(archivos_pgn) > 5:
+                archivo_viejo = archivos_pgn.pop(0)
+                try:
+                    os.remove(archivo_viejo)
+                    print(f"[SISTEMA] Rotación: Eliminado {archivo_viejo}")
+                except OSError:
+                    pass
+
+    def solicitar_apertura_usuario(self):
+        """
+        Método de servicio del motor para obtener una apertura mediante GUI.
+        Se ejecuta de forma aislada para evitar conflictos con hilos de Pygame.
+        """
+        import tkinter as tk
+        from tkinter import simpledialog
         
-        # Mientras haya más de 5 archivos, borramos el primero (el más viejo)
-        while len(archivos_pgn) > 5:
-            archivo_viejo = archivos_pgn.pop(0)
-            try:
-                os.remove(archivo_viejo)
-                print(f"[SISTEMA] Rotacion: Archivo antiguo eliminado ({archivo_viejo})")
-            except OSError:
-                pass
+        root = tk.Tk()
+        root.attributes('-topmost', True)
+        root.withdraw() # Ventana invisible
+        
+        apertura = simpledialog.askstring("Reconocimiento de Aperturas", 
+                                          "Introduce el nombre de la apertura:")
+        root.destroy()
+        
+        if apertura:
+            print(f"\n[MOTOR] Configurando apertura: {apertura}")
+            return apertura
+        return None
