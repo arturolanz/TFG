@@ -10,6 +10,7 @@ import chess.polyglot
 import chess.pgn
 import config  # Importamos centralizadamente la configuración
 import unicodedata
+import pygame
 
 class ChessEngine:
     def __init__(self) -> None:
@@ -245,8 +246,6 @@ class ChessEngine:
         # ---> NUEVO: Freno de emergencia instantáneo <---
         if self.abortar_calculo:
             return 0
-
-        import pygame
         pygame.event.pump()
         
         # ---> NUEVO: DETECCIÓN DE MATE EN QUIESCENCIA <---
@@ -314,7 +313,6 @@ class ChessEngine:
         if self.abortar_calculo:
             return 0
 
-        import pygame
         pygame.event.pump() 
 
         # 1. Reemplazamos self.board por tablero en los estados terminales

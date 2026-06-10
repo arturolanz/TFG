@@ -95,8 +95,8 @@ Se recomienda utilizar un entorno virtual para instalar las dependencias del pro
 
 ### 1. Clonar el repositorio
 
-git clone URL_DEL_REPOSITORIO
-cd NOMBRE_DEL_REPOSITORIO
+git clone https://github.com/arturolanz/TFG/tree/main/ajedrez
+cd ajedrez
 
 ### 2. Crear un entorno virtual
 
