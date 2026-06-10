@@ -7,7 +7,8 @@ venv/
 env/
 
 # Datos y Modelos (pueden ser muy grandes para GitHub)
-data/*.pgn
+docs/logs_partidas/*.pgn
+docs/partidas_descargadas/*.pgn
 models/checkpoint/
 
 # Sistema
