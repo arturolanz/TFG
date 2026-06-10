@@ -1,9 +1,0 @@
-[Event "Auditoría TFG - Pruebas de Motor"]
-[Site "?"]
-[Date "2026.06.06"]
-[Round "?"]
-[White "Humano"]
-[Black "IA Minimax"]
-[Result "0-1"]
-
-1. e4 e6 2. Qg4 Nf6 3. Qxg7 Bxg7 4. g4 Nxe4 5. Bb5 Qh4 6. Nh3 Qxh3 7. d3 Nd6 8. f4 Nxb5 9. d4 Nxd4 10. Be3 Qxe3+ 11. Kf1 Qf3+ 12. Kg1 Ne2# 0-1

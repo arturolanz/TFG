@@ -9,6 +9,7 @@ import chess
 import chess.polyglot
 import chess.pgn
 import config  # Importamos centralizadamente la configuración
+import unicodedata
 
 class ChessEngine:
     def __init__(self) -> None:
@@ -401,7 +402,7 @@ class ChessEngine:
 
             tablero_ia.push(mov)
             if tablero_ia.is_checkmate():
-                print(f"\n[INSTINTO ASESINO] ¡Mate detectado al instante! Jugando: {mov.uci()}")
+                print(f"\n[INSTINTO ASESINO] Mate detectado al instante! Jugando: {mov.uci()}")
                 tablero_ia.pop()
                 
                 # Si es mate directo, lo aplicamos al tablero REAL y salimos
@@ -418,7 +419,11 @@ class ChessEngine:
             for p in tablero_ia.piece_map().values() 
             if p.piece_type != chess.KING
         )
-        profundidad_maxima = 5 if material_tablero < 4000 else 3
+
+        if material_tablero < 2500:
+            profundidad_maxima = 4
+        else:
+            profundidad_maxima = 3
         
         movimiento_final = movimientos_ordenados[0]
         registro_rayos_x = {}
@@ -563,6 +568,47 @@ class ChessEngine:
 
         return sorted(movimientos, key=score_movimiento, reverse=True)
     
+    def _normalizar_texto(self, texto: str) -> str:
+        """
+        Normaliza texto para comparar nombres de aperturas:
+        ignora mayúsculas, tildes y espacios sobrantes.
+        """
+        texto = texto.lower().strip()
+        texto = unicodedata.normalize("NFD", texto)
+        texto = "".join(c for c in texto if unicodedata.category(c) != "Mn")
+        texto = " ".join(texto.split())
+        return texto
+
+    def _buscar_secuencia_apertura(self, nombre_apertura: str) -> str:
+        """
+        Busca una apertura por nombre exacto o parcial.
+        Si hay varias coincidencias, elige la más general.
+        """
+        objetivo = self._normalizar_texto(nombre_apertura)
+
+        if not objetivo:
+            return ""
+
+        coincidencias = []
+
+        for uci, nombre in self.diccionario_aperturas.items():
+            if uci.startswith("//"):
+                continue
+
+            nombre_norm = self._normalizar_texto(nombre)
+
+            if objetivo == nombre_norm:
+                return uci
+
+            if objetivo in nombre_norm:
+                coincidencias.append((len(uci.split()), len(nombre), uci))
+
+        if coincidencias:
+            coincidencias.sort()
+            return coincidencias[0][2]
+
+        return ""
+
     def forzar_inicio_teorico(self, nombre_apertura: str) -> None:
         """
         Reinicia el tablero y ejecuta automáticamente la secuencia de movimientos
@@ -571,11 +617,7 @@ class ChessEngine:
         self.reiniciar_juego()
         
         # Buscamos la secuencia UCI correspondiente en el diccionario cargado del JSON
-        secuencia_uci = ""
-        for uci, nombre in self.diccionario_aperturas.items():
-            if nombre.lower() == nombre_apertura.lower():
-                secuencia_uci = uci
-                break
+        secuencia_uci = self._buscar_secuencia_apertura(nombre_apertura)
                 
         if secuencia_uci and not secuencia_uci.startswith("//"):
             # Ejecutamos cada movimiento de la secuencia teórica en el tablero
@@ -583,9 +625,9 @@ class ChessEngine:
                 mov = chess.Move.from_uci(mov_str)
                 if mov in self.board.legal_moves:
                     self.board.push(mov)
-            print(f"[SISTEMA]: Tablero inicializado con éxito en la variante: {nombre_apertura}")
+            print(f"[SISTEMA]: Tablero inicializado con exito en la variante: {nombre_apertura}")
         else:
-            print(f"[ALERTA]: No se encontró la apertura '{nombre_apertura}' en el JSON.")
+            print(f"[ALERTA]: No se encontro la apertura '{nombre_apertura}' en el JSON.")
 
     def obtener_siguiente_movimiento_guia(self, nombre_apertura: str) -> Optional[chess.Move]:
         """
@@ -593,11 +635,7 @@ class ChessEngine:
         Devuelve el siguiente movimiento teórico que el jugador debe realizar
         para completar la variante, o None si ya se ha desviado o completado.
         """
-        secuencia_uci = ""
-        for uci, nombre in self.diccionario_aperturas.items():
-            if nombre.lower() == nombre_apertura.lower():
-                secuencia_uci = uci
-                break
+        secuencia_uci = self._buscar_secuencia_apertura(nombre_apertura)
                 
         if not secuencia_uci or secuencia_uci.startswith("//"):
             return None
@@ -660,27 +698,24 @@ class ChessEngine:
                 archivo_viejo = archivos_pgn.pop(0)
                 try:
                     os.remove(archivo_viejo)
-                    print(f"[SISTEMA] Rotación: Eliminado {archivo_viejo}")
+                    print(f"[SISTEMA] Rotacion: Eliminado {archivo_viejo}")
                 except OSError:
                     pass
 
     def solicitar_apertura_usuario(self):
-        """
-        Método de servicio del motor para obtener una apertura mediante GUI.
-        Se ejecuta de forma aislada para evitar conflictos con hilos de Pygame.
-        """
         import tkinter as tk
         from tkinter import simpledialog
         
+        # Forzamos que la ventana sea lo único que corra en el hilo principal
         root = tk.Tk()
         root.attributes('-topmost', True)
-        root.withdraw() # Ventana invisible
         
-        apertura = simpledialog.askstring("Reconocimiento de Aperturas", 
-                                          "Introduce el nombre de la apertura:")
+        # Quitamos withdraw() momentáneamente para ver si ayuda a la estabilidad
+        # root.withdraw() 
+        
+        apertura = simpledialog.askstring("Apertura", "Introduce nombre:")
         root.destroy()
         
-        if apertura:
-            print(f"\n[MOTOR] Configurando apertura: {apertura}")
-            return apertura
-        return None
+        # Limpieza forzosa del intérprete
+        del root
+        return apertura

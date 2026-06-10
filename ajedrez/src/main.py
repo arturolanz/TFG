@@ -2,6 +2,7 @@ import pygame
 import chess
 import threading
 import interfaz
+import sys
 from engine import ChessEngine
 
 def main():
@@ -15,14 +16,23 @@ def main():
     # Instanciamos nuestras dos herramientas separadas: el cerebro y los ojos
     motor = ChessEngine()
 
-    # Definimos la variable vacía para que no dé error si no estamos entrenando nada
-    apertura_a_entrenar = ""
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
 
-    # Define aquí qué apertura quieres construir en el tablero paso a paso
-    # apertura_a_entrenar = "Siciliana: Variante Dragón"
+    # =================================================================
+    # MOSTRAR MENÚ DE SELECCIÓN ANTES DE INICIAR
+    # =================================================================
+    color_humano, apertura_a_entrenar, apertura_guiada = interfaz.pantalla_seleccion_color(pantalla, reloj, interfaz.ANCHO, interfaz.ALTO)
 
-    # Descomentar esta línea para arrancar directamente en la variante que quieras auditar:
-    #motor.forzar_inicio_teorico("Siciliana: Variante Dragón")
+    if apertura_a_entrenar:
+        if apertura_guiada:
+            motor.reiniciar_juego()
+            print(f"\n[SISTEMA] Modo Apertura Guiada: {apertura_a_entrenar}")
+        else:
+            motor.forzar_inicio_teorico(apertura_a_entrenar)
+            print(f"\n[SISTEMA] Apertura cargada desde posicion final: {apertura_a_entrenar}")
 
     interfaz.cargar_imagenes()
     
@@ -46,17 +56,16 @@ def main():
     rect_btn_pgn = pygame.Rect(0, 0, 0, 0)      # <--- NUEVO
     rect_btn_apertura = pygame.Rect(0, 0, 0, 0) # <--- NUEVO
 
-    # =================================================================
-    # NUEVO: MOSTRAR MENÚ DE SELECCIÓN DE COLOR ANTES DE INICIAR
-    # =================================================================
-    color_humano = interfaz.pantalla_seleccion_color(pantalla, reloj, interfaz.ANCHO, interfaz.ALTO)
-
     # ---> VARIABLES CACHÉ PARA EVITAR LA CONDICIÓN DE CARRERA <---
     tablero_base_seguro = motor.board.copy()
     tablero_visual = motor.board.copy()
-    nombre_apertura_cache = "Posición Inicial"
-    mov_sugerido_cache = None
+    nombre_apertura_cache = motor.obtener_nombre_apertura()
+    mov_sugerido_cache = motor.obtener_siguiente_movimiento_guia(apertura_a_entrenar)
+
     estado_ia = {"calculando": False}
+    ingresando_apertura = False  # Flag para saber si estamos escribiendo
+    texto_apertura = ""
+    resultado_pgn = "*"
 
     # 2. BUCLE PRINCIPAL DEL JUEGO
     while corriendo:
@@ -67,11 +76,9 @@ def main():
 
             # --- EVENTOS DE RATÓN --- #
             elif e.type == pygame.MOUSEBUTTONDOWN:
-                if partida_finalizada:
-                    ocultar_cartel_final = True 
                 
                 # 1. Viaje en el tiempo (Clic botones)
-                elif rect_btn_izq.collidepoint(e.pos):
+                if rect_btn_izq.collidepoint(e.pos):
                     # No podemos retroceder más allá de la jugada 1
                     offset_visual = max(-len(motor.board.move_stack), offset_visual - 1)
                 elif rect_btn_der.collidepoint(e.pos):
@@ -83,19 +90,18 @@ def main():
                     # Forzamos un guardado manual de la partida al instante
                     motor.guardar_partida_pgn(resultado_pgn, color_humano, es_manual=True)
                     print("\n[SISTEMA] Partida descargada en /docs/partidas_descargadas")
-
+                
+                # ---> ACTIVAR MODO ESCRITURA <---
                 elif rect_btn_apertura.collidepoint(e.pos):
-                    # El motor se encarga de todo el proceso de pedir y validar
-                    nueva_apertura = motor.solicitar_apertura_usuario()
-                    
-                    if nueva_apertura:
-                        apertura_a_entrenar = nueva_apertura
-                        # Forzamos la actualización inmediata del motor
-                        motor.reiniciar_juego()
-                        motor.forzar_inicio_teorico(nueva_apertura)
-                        tablero_base_seguro = motor.board.copy() # Sincronizamos la foto blindada
-                        offset_visual = 0 # Volvemos al presente al cambiar de apertura
-                        print(f"\n[SISTEMA] Apertura cargada: {apertura_a_entrenar}")
+                    ingresando_apertura = True
+                    texto_apertura = "" # Limpiamos para empezar a escribir
+                
+                # Si hacemos clic fuera del botón mientras escribimos, cancelamos
+                elif ingresando_apertura:
+                    ingresando_apertura = False
+
+                elif partida_finalizada:
+                    ocultar_cartel_final = True
 
                 # 2. Clics en el entorno de juego
                 elif not estado_ia["calculando"] and offset_visual == 0:
@@ -104,9 +110,7 @@ def main():
                     fil = ubicacion[1] // interfaz.TAM_CASILLA
                     
                     # --- BARRERA MATEMÁTICA ABSOLUTA ---
-                    # Solo procesamos la lógica si el clic cayó en la cuadrícula 8x8
                     if 0 <= col <= 7 and 0 <= fil <= 7:
-                        
                         # Adaptamos el clic según la perspectiva
                         if color_humano == chess.WHITE:
                             casilla_clic_sq = chess.square(col, 7-fil)
@@ -125,7 +129,6 @@ def main():
                             exito = motor.intentar_movimiento(casilla_sq_seleccionada, casilla_clic_sq)
                             if exito:
                                 offset_visual = 0
-                                # ---> LA CURA: Obligamos a la foto a actualizarse al instante
                                 tablero_base_seguro = motor.board.copy() 
                                 print("Movimiento realizado.")
                             
@@ -134,7 +137,6 @@ def main():
                             casilla_sq_seleccionada = None
                             movimientos_validos = []
                     
-                    # Si el clic cae fuera del 8x8 (ej. en el panel lateral)
                     else:
                         casilla_seleccionada = ()
                         casilla_sq_seleccionada = None
@@ -142,27 +144,88 @@ def main():
 
             # --- EVENTOS DE TECLADO --- #
             elif e.type == pygame.KEYDOWN:
-                if e.key == pygame.K_r:
-                    motor.abortar_calculo = True
-                    motor.reiniciar_juego()
-                    color_humano = interfaz.pantalla_seleccion_color(pantalla, reloj, interfaz.ANCHO, interfaz.ALTO)
-                    partida_finalizada = False
-                    mensaje_final = ""
-                    casilla_seleccionada = ()
-                    casilla_sq_seleccionada = None
-                    movimientos_validos = []
-                    print("\n--- PARTIDA REINICIADA ---")
+                
+                # 1. Si el modo escritura está activo (El usuario hizo clic en el botón)
+                if ingresando_apertura:
+                    mods = pygame.key.get_mods()
 
-                elif e.key == pygame.K_p:
-                    print("\n--- HISTORIAL DE LA PARTIDA (EN CURSO) ---")
-                    juego_actual = chess.pgn.Game.from_board(motor.board)
-                    print(juego_actual)
-                    print("------------------------------------------\n")
+                    if e.key == pygame.K_RETURN:
+                        ingresando_apertura = False
+                        apertura_a_entrenar = texto_apertura.strip()
 
-                elif e.key == pygame.K_LEFT:
-                    offset_visual = max(-len(motor.board.move_stack), offset_visual - 1)
-                elif e.key == pygame.K_RIGHT:
-                    offset_visual = min(0, offset_visual + 1)
+                        motor.reiniciar_juego()
+                        if apertura_a_entrenar:
+                            if apertura_guiada:
+                                print(f"\n[SISTEMA] Modo Apertura Guiada: {apertura_a_entrenar}")
+                            else:
+                                motor.forzar_inicio_teorico(apertura_a_entrenar)
+                                print(f"\n[SISTEMA] Apertura cargada desde posicion final: {apertura_a_entrenar}")
+
+                        tablero_base_seguro = motor.board.copy()
+                        tablero_visual = motor.board.copy()
+                        offset_visual = 0
+
+                        print(f"\n[SISTEMA] Apertura fijada: {apertura_a_entrenar}")
+
+                    elif e.key == pygame.K_ESCAPE:
+                        ingresando_apertura = False
+                        texto_apertura = ""
+
+                    elif e.key == pygame.K_BACKSPACE:
+                        texto_apertura = texto_apertura[:-1]
+
+                    elif e.key == pygame.K_v and (mods & pygame.KMOD_CTRL or mods & pygame.KMOD_META):
+                        pegado = interfaz.leer_texto_portapapeles()
+                        if pegado:
+                            texto_apertura += pegado
+
+                    elif e.unicode:
+                        texto_apertura += e.unicode
+                
+                # 2. Si no estamos escribiendo, procesamos juego normalmente
+                else:
+                    if e.key == pygame.K_r:
+                        motor.abortar_calculo = True
+                        motor.reiniciar_juego()
+
+                        color_humano, apertura_a_entrenar, apertura_guiada = interfaz.pantalla_seleccion_color(
+                            pantalla, reloj, interfaz.ANCHO, interfaz.ALTO
+                        )
+
+                        if apertura_a_entrenar:
+                            if apertura_guiada:
+                                motor.reiniciar_juego()
+                                print(f"\n[SISTEMA] Modo Apertura Guiada: {apertura_a_entrenar}")
+                            else:
+                                motor.forzar_inicio_teorico(apertura_a_entrenar)
+                                print(f"\n[SISTEMA] Apertura cargada desde posicion final: {apertura_a_entrenar}")
+
+
+                        tablero_base_seguro = motor.board.copy()
+                        tablero_visual = motor.board.copy()
+                        nombre_apertura_cache = motor.obtener_nombre_apertura()
+                        mov_sugerido_cache = motor.obtener_siguiente_movimiento_guia(apertura_a_entrenar)
+                        offset_visual = 0
+
+                        partida_finalizada = False
+                        mensaje_final = ""
+                        ocultar_cartel_final = False
+                        casilla_seleccionada = ()
+                        casilla_sq_seleccionada = None
+                        movimientos_validos = []
+
+                        print("\n--- PARTIDA REINICIADA ---")
+
+                    elif e.key == pygame.K_p:
+                        print("\n--- HISTORIAL DE LA PARTIDA (EN CURSO) ---")
+                        juego_actual = chess.pgn.Game.from_board(motor.board)
+                        print(juego_actual)
+                        print("------------------------------------------\n")
+
+                    elif e.key == pygame.K_LEFT:
+                        offset_visual = max(-len(motor.board.move_stack), offset_visual - 1)
+                    elif e.key == pygame.K_RIGHT:
+                        offset_visual = min(0, offset_visual + 1)
 
         # --- COMPROBACIÓN GENERAL DE FIN DE PARTIDA ---
         if not estado_ia["calculando"] and motor.juego_terminado() and not partida_finalizada:
@@ -171,10 +234,10 @@ def main():
 
             if motor.board.is_checkmate():
                 if motor.board.turn == chess.WHITE:
-                    mensaje_final = "¡JAQUE MATE! Ganan las Negras"
+                    mensaje_final = "JAQUE MATE! Ganan las Negras"
                     resultado_pgn = "0-1"
                 else:
-                    mensaje_final = "¡JAQUE MATE! Ganan las Blancas"
+                    mensaje_final = "JAQUE MATE! Ganan las Blancas"
                     resultado_pgn = "1-0"
             elif motor.board.is_stalemate():
                 mensaje_final = "TABLAS: Rey Ahogado"
@@ -300,6 +363,9 @@ def main():
         for _ in range(abs(offset_visual)):
             if tablero_visual.move_stack:
                 tablero_visual.pop()
+
+        if ingresando_apertura:
+            interfaz.dibujar_editor_apertura(pantalla, texto_apertura)
 
         pygame.display.flip()
         reloj.tick(interfaz.MAX_FPS)

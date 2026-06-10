@@ -18,6 +18,7 @@ COLOR_JAQUE = (255, 0, 0, 150)         # Rojo intenso translúcido
 ocultar_cartel_final = False
 
 
+
 def cargar_imagenes():
     """Carga las imágenes de las piezas desde la carpeta 'images' a un diccionario."""
     piezas = ['wp', 'wr', 'wn', 'wb', 'wq', 'wk', 'bp', 'br', 'bn', 'bb', 'bq', 'bk']
@@ -140,49 +141,227 @@ def resaltar_guia_teorica(pantalla, movimiento_guia, color_humano=chess.WHITE):
 
 def pantalla_seleccion_color(pantalla, reloj, ancho, alto):
     """
-    Dibuja un menú de selección de bando antes de iniciar el bucle principal.
-    Devuelve chess.WHITE o chess.BLACK según el botón pulsado.
+    Pantalla inicial sobria para configurar la partida.
+    Permite elegir color y escribir o pegar una apertura.
+    Devuelve: (color_elegido, nombre_apertura)
     """
-    fuente = pygame.font.SysFont("Helvetica", 32, bold=True)
-    esperando = True
-    color_elegido = None
+    import pygame
+    import chess
+    import sys
 
-    while esperando:
-        pantalla.fill((40, 40, 40)) # Fondo gris oscuro elegante
-        
-        # Coordenadas y dimensiones de los botones
-        rect_blancas = pygame.Rect(ancho//2 - 150, alto//2 - 80, 300, 60)
-        rect_negras  = pygame.Rect(ancho//2 - 150, alto//2 + 20, 300, 60)
-        
-        # Dibujamos los botones
-        pygame.draw.rect(pantalla, (240, 240, 240), rect_blancas, border_radius=10)
-        pygame.draw.rect(pantalla, (30, 30, 30), rect_negras, border_radius=10)
-        pygame.draw.rect(pantalla, (200, 200, 200), rect_negras, 2, border_radius=10) # Borde
-        
-        texto_b = fuente.render("Jugar con Blancas", True, (20, 20, 20))
-        texto_n = fuente.render("Jugar con Negras", True, (240, 240, 240))
-        
-        pantalla.blit(texto_b, texto_b.get_rect(center=rect_blancas.center))
-        pantalla.blit(texto_n, texto_n.get_rect(center=rect_negras.center))
-        
-        pygame.display.flip()
-        
-        # Escuchamos los clics
-        for evento in pygame.event.get():
-            if evento.type == pygame.QUIT:
+    pygame.font.init()
+
+    # Fuentes normales, sin estilo exagerado
+    fuente_titulo = pygame.font.SysFont("Arial", 30, bold=True)
+    fuente_subtitulo = pygame.font.SysFont("Arial", 15)
+    fuente_btn = pygame.font.SysFont("Arial", 19, bold=True)
+    fuente_label = pygame.font.SysFont("Arial", 16)
+    fuente_input = pygame.font.SysFont("Arial", 15)
+    fuente_ayuda = pygame.font.SysFont("Arial", 12)
+
+    # Paleta parecida a una app de escritorio
+    fondo = (34, 34, 31)
+    panel = (43, 42, 38)
+    panel_borde = (78, 75, 68)
+
+    texto = (235, 232, 224)
+    texto_suave = (165, 160, 150)
+
+    claro = (230, 226, 216)
+    oscuro = (24, 24, 22)
+    verde = (118, 150, 86)
+
+    # Layout más compacto
+    panel_rect = pygame.Rect(0, 0, 560, 330)
+    panel_rect.center = (ancho // 2, alto // 2)
+
+    margen_x = panel_rect.x + 48
+
+    btn_blancas = pygame.Rect(margen_x, panel_rect.y + 105, 210, 48)
+    btn_negras = pygame.Rect(margen_x + 250, panel_rect.y + 105, 210, 48)
+
+    input_rect = pygame.Rect(margen_x, panel_rect.y + 215, 460, 42)
+
+    check_guiada_rect = pygame.Rect(margen_x, input_rect.bottom + 34, 18, 18)
+
+    texto_apertura = ""
+    input_activo = False
+    apertura_guiada = False
+
+    while True:
+        mouse = pygame.mouse.get_pos()
+
+        for e in pygame.event.get():
+            if e.type == pygame.QUIT:
                 pygame.quit()
-                exit()
-            elif evento.type == pygame.MOUSEBUTTONDOWN:
-                if rect_blancas.collidepoint(evento.pos):
-                    color_elegido = chess.WHITE
-                    esperando = False
-                elif rect_negras.collidepoint(evento.pos):
-                    color_elegido = chess.BLACK
-                    esperando = False
-                    
-        reloj.tick(15)
-        
-    return color_elegido
+                sys.exit()
+
+            elif e.type == pygame.MOUSEBUTTONDOWN:
+                input_activo = input_rect.collidepoint(e.pos)
+
+                if check_guiada_rect.collidepoint(e.pos):
+                    apertura_guiada = not apertura_guiada
+
+                if btn_blancas.collidepoint(e.pos):
+                    return chess.WHITE, texto_apertura.strip(), apertura_guiada
+
+                elif btn_negras.collidepoint(e.pos):
+                    return chess.BLACK, texto_apertura.strip(), apertura_guiada
+
+            elif e.type == pygame.KEYDOWN and input_activo:
+                mods = pygame.key.get_mods()
+
+                if e.key == pygame.K_RETURN:
+                    input_activo = False
+
+                elif e.key == pygame.K_ESCAPE:
+                    texto_apertura = ""
+                    input_activo = False
+
+                elif e.key == pygame.K_BACKSPACE:
+                    texto_apertura = texto_apertura[:-1]
+
+                elif e.key == pygame.K_a and (mods & pygame.KMOD_CTRL or mods & pygame.KMOD_META):
+                    texto_apertura = ""
+
+                elif e.key == pygame.K_v and (mods & pygame.KMOD_CTRL or mods & pygame.KMOD_META):
+                    pegado = leer_texto_portapapeles()
+                    if pegado:
+                        texto_apertura += pegado
+
+                elif e.unicode:
+                    texto_apertura += e.unicode
+
+        # Fondo liso, sin patrón llamativo
+        pantalla.fill(fondo)
+
+        # Panel principal
+        pygame.draw.rect(pantalla, panel, panel_rect)
+        pygame.draw.rect(pantalla, panel_borde, panel_rect, 2)
+
+        # Cabecera
+        titulo = fuente_titulo.render("Nueva partida", True, texto)
+        pantalla.blit(titulo, (margen_x, panel_rect.y + 34))
+
+        subtitulo = fuente_subtitulo.render(
+            "Configura el color del jugador y una apertura opcional.",
+            True,
+            texto_suave
+        )
+        pantalla.blit(subtitulo, (margen_x, panel_rect.y + 70))
+
+        # Botón blancas
+        hover_b = btn_blancas.collidepoint(mouse)
+        pygame.draw.rect(
+            pantalla,
+            (240, 237, 228) if hover_b else claro,
+            btn_blancas
+        )
+        pygame.draw.rect(pantalla, (120, 116, 108), btn_blancas, 1)
+
+        txt_b = fuente_btn.render("Jugar con blancas", True, (30, 30, 28))
+        pantalla.blit(
+            txt_b,
+            (
+                btn_blancas.centerx - txt_b.get_width() // 2,
+                btn_blancas.centery - txt_b.get_height() // 2
+            )
+        )
+
+        # Botón negras
+        hover_n = btn_negras.collidepoint(mouse)
+        pygame.draw.rect(
+            pantalla,
+            (34, 34, 32) if hover_n else oscuro,
+            btn_negras
+        )
+        pygame.draw.rect(pantalla, (120, 116, 108), btn_negras, 1)
+
+        txt_n = fuente_btn.render("Jugar con negras", True, (235, 235, 235))
+        pantalla.blit(
+            txt_n,
+            (
+                btn_negras.centerx - txt_n.get_width() // 2,
+                btn_negras.centery - txt_n.get_height() // 2
+            )
+        )
+
+        # Separador
+        pygame.draw.line(
+            pantalla,
+            (75, 72, 66),
+            (margen_x, panel_rect.y + 180),
+            (panel_rect.right - 48, panel_rect.y + 180)
+        )
+
+        # Campo de apertura
+        label = fuente_label.render("Apertura a entrenar", True, texto)
+        pantalla.blit(label, (margen_x, panel_rect.y + 194))
+
+        pygame.draw.rect(pantalla, (28, 28, 26), input_rect)
+        pygame.draw.rect(
+            pantalla,
+            verde if input_activo else (90, 86, 78),
+            input_rect,
+            2 if input_activo else 1
+        )
+
+        if texto_apertura:
+            dibujar_texto_recortado(
+                pantalla,
+                texto_apertura,
+                fuente_input,
+                texto,
+                input_rect,
+                padding=10,
+                mostrar_cursor=input_activo
+            )
+        else:
+            dibujar_texto_recortado(
+                pantalla,
+                "Opcional",
+                fuente_input,
+                (120, 116, 108),
+                input_rect,
+                padding=10,
+                mostrar_cursor=False
+            )
+
+        ayuda = fuente_ayuda.render(
+            "Ctrl+V para pegar · Enter para aceptar · Esc para limpiar",
+            True,
+            texto_suave
+        )
+        pantalla.blit(ayuda, (margen_x, input_rect.bottom + 10))
+
+        # Check: apertura guiada
+        pygame.draw.rect(pantalla, (28, 28, 26), check_guiada_rect)
+        pygame.draw.rect(
+            pantalla,
+            (118, 150, 86) if apertura_guiada else (90, 86, 78),
+            check_guiada_rect,
+            2
+        )
+
+        if apertura_guiada:
+            marca = pygame.Rect(
+                check_guiada_rect.x + 4,
+                check_guiada_rect.y + 4,
+                check_guiada_rect.width - 8,
+                check_guiada_rect.height - 8
+            )
+            pygame.draw.rect(pantalla, (118, 150, 86), marca)
+
+        texto_check = fuente_ayuda.render(
+            "Guiada: mostrar movimientos desde la posición inicial",
+            True,
+            texto_suave
+        )
+        pantalla.blit(texto_check, (check_guiada_rect.right + 10, check_guiada_rect.y - 1))
+
+        pygame.display.flip()
+        reloj.tick(60)
+    
 
 
 def dibujar_coordenadas(pantalla, color_humano):
@@ -522,3 +701,185 @@ def dibujar_botones_admin(pantalla, apertura_actual, y_inicio=340):
     pantalla.blit(texto_ap, (x_base + 10, y_btn_2 + 8)) 
 
     return rect_pgn, rect_ap
+
+def leer_texto_portapapeles():
+    """
+    Lee texto del portapapeles en Windows sin usar tkinter.
+    Evita errores Tcl_AsyncDelete al combinar Pygame con hilos.
+    """
+    import ctypes
+    import pygame
+
+    texto = ""
+
+    # 1. Método principal en Windows: WinAPI
+    try:
+        CF_UNICODETEXT = 13
+        user32 = ctypes.windll.user32
+        kernel32 = ctypes.windll.kernel32
+
+        if user32.OpenClipboard(None):
+            try:
+                handle = user32.GetClipboardData(CF_UNICODETEXT)
+                if handle:
+                    puntero = kernel32.GlobalLock(handle)
+                    if puntero:
+                        try:
+                            texto = ctypes.wstring_at(puntero)
+                        finally:
+                            kernel32.GlobalUnlock(handle)
+            finally:
+                user32.CloseClipboard()
+
+    except Exception:
+        texto = ""
+
+    # 2. Respaldo: pygame.scrap
+    if not texto:
+        try:
+            if not pygame.scrap.get_init():
+                pygame.scrap.init()
+
+            datos = pygame.scrap.get(pygame.SCRAP_TEXT)
+
+            if datos:
+                for codificacion in ("utf-8-sig", "utf-16", "utf-16le", "cp1252", "latin-1"):
+                    try:
+                        texto = datos.decode(codificacion)
+                        break
+                    except UnicodeDecodeError:
+                        pass
+
+        except Exception:
+            texto = ""
+
+    return limpiar_texto_pegado(texto)
+
+
+def limpiar_texto_pegado(texto):
+    """
+    Limpia el texto pegado en el input de apertura.
+    Si se copia una línea completa del JSON, extrae el nombre de la apertura.
+    Si se copia un nombre con dos puntos, lo respeta entero.
+    """
+    import json
+    import re
+
+    if not texto:
+        return ""
+
+    texto = texto.replace("\x00", "")
+    texto = texto.replace("\r", " ").replace("\n", " ").replace("\t", " ")
+    texto = " ".join(texto.split()).strip()
+
+    texto_sin_coma = texto.rstrip(",")
+
+    # Solo interpretamos como línea JSON si empieza por una clave entre comillas.
+    # Ejemplo:
+    # "e2e4 c7c5": "Defensa Siciliana",
+    if re.match(r'^\s*"[^"]+"\s*:\s*', texto_sin_coma):
+        try:
+            objeto = json.loads("{" + texto_sin_coma + "}")
+            if isinstance(objeto, dict) and objeto:
+                return str(next(iter(objeto.values()))).strip()
+        except Exception:
+            pass
+
+        coincidencia = re.match(
+            r'^\s*"[^"]+"\s*:\s*"((?:\\.|[^"])*)"\s*$',
+            texto_sin_coma
+        )
+        if coincidencia:
+            try:
+                return json.loads('"' + coincidencia.group(1) + '"').strip()
+            except Exception:
+                return coincidencia.group(1).strip()
+
+    # Si se copia solo el valor entre comillas:
+    # "Dragón: Ataque Yugoslavo"
+    if len(texto_sin_coma) >= 2 and texto_sin_coma[0] == '"' and texto_sin_coma[-1] == '"':
+        try:
+            texto_sin_coma = json.loads(texto_sin_coma)
+        except Exception:
+            texto_sin_coma = texto_sin_coma[1:-1]
+
+    texto_sin_coma = re.sub(r"[\x00-\x1f\x7f]", "", texto_sin_coma)
+
+    return texto_sin_coma.strip()
+
+
+def dibujar_texto_recortado(pantalla, texto, fuente, color, rect, padding=10, mostrar_cursor=False):
+    """
+    Dibuja texto dentro de un rectángulo sin limitar caracteres.
+    Si el texto es largo, se muestra la parte final, como en un input profesional.
+    """
+    import pygame
+
+    texto_visible = texto
+    if mostrar_cursor and pygame.time.get_ticks() % 1000 < 500:
+        texto_visible += "|"
+
+    superficie = fuente.render(texto_visible, True, color)
+
+    x = rect.x + padding
+    if superficie.get_width() > rect.width - padding * 2:
+        x = rect.right - padding - superficie.get_width()
+
+    y = rect.centery - superficie.get_height() // 2
+
+    clip_anterior = pantalla.get_clip()
+    pantalla.set_clip(rect.inflate(-padding, -4))
+    pantalla.blit(superficie, (x, y))
+    pantalla.set_clip(clip_anterior)
+
+def dibujar_editor_apertura(pantalla, texto_apertura, y_inicio=420):
+    """
+    Dibuja un editor compacto de apertura dentro del panel lateral.
+    No limita caracteres: muestra la parte final del texto si es muy largo.
+    """
+    import pygame
+
+    pygame.font.init()
+
+    x_base = ANCHO_TABLERO + 15
+    ancho_editor = 150
+
+    fuente_titulo = pygame.font.SysFont("Segoe UI", 12, bold=True)
+    fuente_input = pygame.font.SysFont("Segoe UI", 13)
+    fuente_ayuda = pygame.font.SysFont("Segoe UI", 10)
+
+    contenedor = pygame.Rect(x_base - 5, y_inicio, ancho_editor + 10, 86)
+    input_rect = pygame.Rect(x_base, y_inicio + 25, ancho_editor, 30)
+
+    pygame.draw.rect(pantalla, (30, 29, 26), contenedor, border_radius=8)
+    pygame.draw.rect(pantalla, (118, 150, 86), contenedor, 1, border_radius=8)
+
+    titulo = fuente_titulo.render("Apertura a entrenar", True, (235, 235, 235))
+    pantalla.blit(titulo, (x_base, y_inicio + 7))
+
+    pygame.draw.rect(pantalla, (20, 20, 18), input_rect, border_radius=5)
+    pygame.draw.rect(pantalla, (118, 150, 86), input_rect, 2, border_radius=5)
+
+    if texto_apertura:
+        dibujar_texto_recortado(
+            pantalla,
+            texto_apertura,
+            fuente_input,
+            (245, 245, 245),
+            input_rect,
+            padding=8,
+            mostrar_cursor=True
+        )
+    else:
+        dibujar_texto_recortado(
+            pantalla,
+            "Ctrl+V o escribe...",
+            fuente_input,
+            (125, 122, 116),
+            input_rect,
+            padding=8,
+            mostrar_cursor=True
+        )
+
+    ayuda = fuente_ayuda.render("Enter aplicar · Esc cancelar", True, (150, 145, 135))
+    pantalla.blit(ayuda, (x_base, y_inicio + 62))
