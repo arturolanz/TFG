@@ -8,7 +8,7 @@ from typing import Dict, Optional, List
 import chess
 import chess.polyglot
 import chess.pgn
-import config  # Importamos centralizadamente la configuración
+import config  # Configuración general del proyecto
 import unicodedata
 import pygame
 
@@ -16,7 +16,7 @@ class ChessEngine:
     def __init__(self) -> None:
         self.board: chess.Board = chess.Board()
         self.diccionario_aperturas: Dict[str, str] = {}
-        self.abortar_calculo = False  # <--- NUEVO: Nuestro botón de pánico
+        self.abortar_calculo = False  # Me permite cortar cálculos largos desde la interfaz
         self._cargar_base_aperturas()
 
     def _cargar_base_aperturas(self) -> None:
@@ -50,13 +50,13 @@ class ChessEngine:
         Verifica si un movimiento humano es legal. Si lo es, lo ejecuta 
         en el tablero (gestionando la coronación automática a Reina) y devuelve True.
         """
-        # 1. Intentamos el movimiento estándar
+        # Primero pruebo el movimiento normal.
         movimiento_estandar = chess.Move(origen, destino)
         if movimiento_estandar in self.board.legal_moves:
             self.board.push(movimiento_estandar)
             return True
             
-        # 2. Si no es legal, comprobamos si es un movimiento de promoción/coronación de peón
+        # Si es promoción, por defecto corono a dama.
         movimiento_promocion = chess.Move(origen, destino, promotion=chess.QUEEN)
         if movimiento_promocion in self.board.legal_moves:
             self.board.push(movimiento_promocion)
@@ -87,8 +87,8 @@ class ChessEngine:
         """
         historial_uci: str = " ".join([mov.uci() for mov in self.board.move_stack])
         
-        # --- REPARACIÓN DE LA ARQUITECTURA ---
-        # Ordenamos las aperturas de la cadena más larga (variante específica) a la más corta
+        # --- Búsqueda de la apertura más específica ---
+        # Reviso antes las variantes largas para no quedarme con una línea demasiado general.
         aperturas_ordenadas = sorted(
             self.diccionario_aperturas.items(), 
             key=lambda x: len(x[0]), 
@@ -113,7 +113,7 @@ class ChessEngine:
             with chess.polyglot.open_reader(config.RUTA_LIBRO_APERTURAS) as reader:
                 entradas = list(reader.find_all(self.board))
                 
-                # Filtro de seguridad: jugadas teóricas con peso > 0 y 100% legales
+                # Solo uso entradas del libro con peso y que sigan siendo legales.
                 entradas_validas = [
                     e for e in entradas 
                     if e.weight > 0 and e.move in self.board.legal_moves
@@ -125,17 +125,17 @@ class ChessEngine:
                     pesos = [e.weight for e in entradas_validas]
                     
                     if modo == "ponderado":
-                        # Modo actual: respeta los pesos estadísticos (juego duro/competitivo)
+                        # Modo ponderado: respeta los pesos del libro.
                         eleccion = random.choices(movimientos, weights=pesos, k=1)
                         return eleccion[0]
                         
                     elif modo == "uniforme":
-                        # MÁXIMA VARIEDAD: Todas las jugadas del libro tienen la misma probabilidad.
-                        # Forzará al motor a jugar Escandinavas, Alekhines, Caro-Kanns, etc.
+                        # Modo uniforme: prioriza variedad en la fase de apertura.
+                        # Así el motor no repite siempre la misma respuesta.
                         return random.choice(movimientos)
                         
                     elif modo == "principal":
-                        # DETERMINISTA: Elige estrictamente la jugada con mayor peso del libro.
+                        # Modo principal: opción determinista para pruebas.
                         max_idx = pesos.index(max(pesos))
                         return movimientos[max_idx]
                         
@@ -180,18 +180,18 @@ class ChessEngine:
                     puntuacion_total -= valor_final_pieza
                     
         # =====================================================================
-        # DESEMPATE ESTRATÉGICO DE GRANO FINO (Rompe las mesetas de evaluación)
+        # AJUSTES FINOS DE EVALUACIÓN
         # =====================================================================
     
-        # 1. CONTROL DEL CENTRO (Las 4 casillas críticas: d4, e4, d5, e5)
+        # 1. Control del centro: d4, e4, d5 y e5.
         casillas_centrales = [chess.E4, chess.D4, chess.E5, chess.D5]
         control_blanco = sum(1 for c in casillas_centrales if tablero.is_attacked_by(chess.WHITE, c))
         control_negro = sum(1 for c in casillas_centrales if tablero.is_attacked_by(chess.BLACK, c))
         
-        # Otorgamos 0.2 puntos por cada ataque al centro
+        # Pequeño desempate por actividad central.
         puntuacion_total += (control_blanco - control_negro) * 0.2
 
-        # 2. PENALIZACIÓN POR PEONES DOBLADOS (Estructura sólida)
+        # 2. Penalización sencilla por peones doblados.
         peones_blancos = tablero.pieces(chess.PAWN, chess.WHITE)
         peones_negros = tablero.pieces(chess.PAWN, chess.BLACK)
         
@@ -204,7 +204,7 @@ class ChessEngine:
         puntuacion_total -= doblados_blancos * 0.3
         puntuacion_total += doblados_negros * 0.3
 
-        # 3. HEURÍSTICA DE LIMPIEZA (MOP-UP) PARA FORZAR EL JAQUE MATE
+        # 3. Mop-up: ayuda a convertir ventajas grandes en mate.
         if abs(puntuacion_total) > 400:
             if puntuacion_total > 0:
                 puntuacion_total += self._forzar_rey_esquina(tablero, chess.WHITE, chess.BLACK)
@@ -225,16 +225,16 @@ class ChessEngine:
         if rey_enemigo_sq is None or rey_amigo_sq is None:
             return 0
             
-        # Coordenadas del rey enemigo
+        # Coordenadas básicas del rey rival.
         fila_enemiga = chess.square_rank(rey_enemigo_sq)
         col_enemiga = chess.square_file(rey_enemigo_sq)
         
-        # Distancia del rey enemigo al centro (fomenta empujarlo al borde)
+        # Cuanto más lejos del centro esté el rey enemigo, mejor para el bando fuerte.
         distancia_centro_fila = max(3 - fila_enemiga, fila_enemiga - 4)
         distancia_centro_col = max(3 - col_enemiga, col_enemiga - 4)
         puntos_mopup += (distancia_centro_fila + distancia_centro_col) * 10
         
-        # Distancia entre ambos reyes (fomenta la aproximación de nuestro rey)
+        # También interesa acercar nuestro rey al rey rival.
         fila_amiga = chess.square_rank(rey_amigo_sq)
         col_amiga = chess.square_file(rey_amigo_sq)
         dist_reyes = abs(fila_enemiga - fila_amiga) + abs(col_enemiga - col_amiga)
@@ -243,27 +243,27 @@ class ChessEngine:
         return puntos_mopup
 
     def quiescencia(self, tablero, alfa: float, beta: float, maximizando_blancas: bool, limite_profundidad: int = 4) -> float:
-        # ---> NUEVO: Freno de emergencia instantáneo <---
+        # Corte rápido si el cálculo se ha cancelado.
         if self.abortar_calculo:
             return 0
         pygame.event.pump()
         
-        # ---> NUEVO: DETECCIÓN DE MATE EN QUIESCENCIA <---
+        # Mate detectado dentro de la búsqueda de quiescencia.
         if tablero.is_checkmate():
-            # Sumamos/restamos el limite_profundidad para que la IA prefiera el mate más rápido posible
+            # Prefiero el mate más corto ajustando la puntuación con la profundidad restante.
             return -100000 - limite_profundidad if tablero.turn == chess.WHITE else 100000 + limite_profundidad
             
         if tablero.is_stalemate() or tablero.is_insufficient_material() or tablero.is_repetition(2):
             return 0
 
-        eval_actual = self.evaluar_tablero(tablero) # <--- Ahora lee la puntuación del clon
+        eval_actual = self.evaluar_tablero(tablero)  # Evaluación de la posición actual del clon
         
         if limite_profundidad == 0:
             return eval_actual
 
         en_jaque = tablero.is_check()
         
-        # Soft-fail Stand Pat
+        # Stand pat: evalúo la posición actual antes de seguir con capturas o jaques.
         if not en_jaque:
             if maximizando_blancas:
                 if eval_actual >= beta: return eval_actual
@@ -280,14 +280,14 @@ class ChessEngine:
                 if tablero.is_capture(mov) or tablero.gives_check(mov):
                     movimientos_tacticos.append(mov)
 
-        # Arreglado el TypeError de los parámetros
+        # Ordeno primero las jugadas tácticas para que la poda trabaje mejor.
         movimientos_tacticos = self._evaluar_y_ordenar_movimientos(tablero, movimientos_tacticos)
 
         if maximizando_blancas:
             max_eval = eval_actual if not en_jaque else -float('inf')
             for mov in movimientos_tacticos:
                 tablero.push(mov)
-                # Pasamos el tablero en la recursividad
+                # Recurro solo sobre posiciones tácticas.
                 puntuacion = self.quiescencia(tablero, alfa, beta, False, limite_profundidad - 1)
                 tablero.pop()
                 
@@ -299,7 +299,7 @@ class ChessEngine:
             min_eval = eval_actual if not en_jaque else float('inf')
             for mov in movimientos_tacticos:
                 tablero.push(mov)
-                # Pasamos el tablero en la recursividad
+                # Recurro solo sobre posiciones tácticas.
                 puntuacion = self.quiescencia(tablero, alfa, beta, True, limite_profundidad - 1)
                 tablero.pop()
                 
@@ -309,13 +309,13 @@ class ChessEngine:
             return min_eval
 
     def minimax(self, tablero, profundidad: int, maximizando_blancas: bool, alfa: float, beta: float) -> float:
-        # ---> NUEVO: Freno de emergencia instantáneo <---
+        # Corte rápido si el cálculo se ha cancelado.
         if self.abortar_calculo:
             return 0
 
         pygame.event.pump() 
 
-        # 1. Reemplazamos self.board por tablero en los estados terminales
+        # Estados terminales usando siempre el tablero recibido.
         if tablero.is_checkmate():
             return -100000 - profundidad if tablero.turn == chess.WHITE else 100000 + profundidad
             
@@ -323,22 +323,21 @@ class ChessEngine:
             return 0
 
         if profundidad == 0:
-            # ¡OJO! Tu búsqueda de quiescencia también necesitará recibir este tablero clonado
+            # Al llegar al límite, paso a quiescencia para no cortar una táctica abierta.
             return self.quiescencia(tablero, alfa, beta, maximizando_blancas)
 
-        # 2. Obtenemos los movimientos legales del tablero clonado
-        # Si tu función _evaluar_y_ordenar_movimientos lee posiciones de piezas, pásale también 'tablero'
+        # Genero y ordeno movimientos del tablero de análisis.
         movimientos_legales = self._evaluar_y_ordenar_movimientos(tablero, list(tablero.legal_moves))
 
         if maximizando_blancas:
             max_eval = -float('inf')
             for mov in movimientos_legales:
-                tablero.push(mov) # Hacer movimiento en el tablero local
+                tablero.push(mov)  # Simulo el movimiento en el tablero local
                 
-                # 3. Pasamos el tablero en la llamada recursiva
+                # Llamada recursiva sobre la posición simulada.
                 eval_actual = self.minimax(tablero, profundidad - 1, False, alfa, beta)
                 
-                tablero.pop() # Deshacer movimiento en el tablero local
+                tablero.pop()  # Deshago el movimiento local
                 
                 max_eval = max(max_eval, eval_actual)
                 alfa = max(alfa, eval_actual)
@@ -347,12 +346,12 @@ class ChessEngine:
         else:
             min_eval = float('inf')
             for mov in movimientos_legales:
-                tablero.push(mov) # Hacer movimiento en el tablero local
+                tablero.push(mov)  # Simulo el movimiento en el tablero local
                 
-                # 3. Pasamos el tablero en la llamada recursiva
+                # Llamada recursiva sobre la posición simulada.
                 eval_actual = self.minimax(tablero, profundidad - 1, True, alfa, beta)
                 
-                tablero.pop() # Deshacer movimiento en el tablero local
+                tablero.pop()  # Deshago el movimiento local
                 
                 min_eval = min(min_eval, eval_actual)
                 beta = min(beta, eval_actual)
@@ -363,12 +362,12 @@ class ChessEngine:
         import random
         
         # =========================================================================
-        # 1. MODO ENTRENAMIENTO ESTRICTO (Prioridad Absoluta)
+        # 1. MODO ENTRENAMIENTO ESTRICTO
         # =========================================================================
         if apertura_entrenamiento:
             mov_guia = self.obtener_siguiente_movimiento_guia(apertura_entrenamiento)
             if mov_guia and mov_guia in self.board.legal_moves:
-                print(f"-> IA forzada por el guión de entrenamiento ({apertura_entrenamiento}): {mov_guia}")
+                print(f"-> IA forzada por el guion de entrenamiento ({apertura_entrenamiento}): {mov_guia}")
                 self.board.push(mov_guia)
                 return True
 
@@ -383,19 +382,19 @@ class ChessEngine:
             return True
 
         # =========================================================================
-        # 3. MOTOR CLÁSICO (Con Profundización Iterativa y Corte Inmediato)
+        # 3. MOTOR CLÁSICO (profundización iterativa + Alfa-Beta)
         # =========================================================================
-        # ¡CAMBIO CLAVE!: Clonamos el tablero aquí. Toda la simulación pesada
-        # ocurrirá en 'tablero_ia', dejando 'self.board' libre para el hilo principal.
+        # Trabajo sobre una copia para no bloquear ni modificar el tablero real.
+        # La interfaz sigue leyendo self.board mientras la IA calcula aparte.
         tablero_ia = self.board.copy()
 
         movimientos_legales = list(tablero_ia.legal_moves)
         if not movimientos_legales: 
             return False
 
-        # Instinto Asesino O(1) (Mate en 1 directo) -> Ahora usa tablero_ia
+        # Primer atajo: si hay mate en 1, se juega directamente.
         for mov in movimientos_legales:
-            if self.abortar_calculo: # <--- NUEVO: Salir del bucle de movimientos al instante
+            if self.abortar_calculo:  # Cancelación solicitada desde la interfaz
                     break
 
             tablero_ia.push(mov)
@@ -403,12 +402,12 @@ class ChessEngine:
                 print(f"\n[INSTINTO ASESINO] Mate detectado al instante! Jugando: {mov.uci()}")
                 tablero_ia.pop()
                 
-                # Si es mate directo, lo aplicamos al tablero REAL y salimos
+                # El mate directo se aplica en el tablero real.
                 self.board.push(mov)
                 return True
             tablero_ia.pop()
 
-        # Pasamos 'tablero_ia' a tu función de ordenamiento por si analiza casillas/piezas
+        # Orden inicial de movimientos antes de entrar en Minimax.
         movimientos_ordenados = self._evaluar_y_ordenar_movimientos(tablero_ia, movimientos_legales)
         soy_blancas = tablero_ia.turn == chess.WHITE
         
@@ -426,10 +425,10 @@ class ChessEngine:
         movimiento_final = movimientos_ordenados[0]
         registro_rayos_x = {}
 
-        # PROFUNDIZACIÓN ITERATIVA (El motor busca capa por capa)
+        # Profundización iterativa: el motor aumenta la profundidad paso a paso.
         for profundidad_actual in range(1, profundidad_maxima + 1):
             
-            if self.abortar_calculo:  # <--- NUEVO: Salimos del bucle si nos cancelan
+            if self.abortar_calculo:  # Si se cancela, salgo sin apurar más cálculo
                 break
 
             mejor_valor = -float('inf') if soy_blancas else float('inf')
@@ -440,52 +439,58 @@ class ChessEngine:
             mate_encontrado = False
 
             for mov in movimientos_ordenados:
-                tablero_ia.push(mov) # <--- CAMBIO: push en el clon
+                tablero_ia.push(mov)  # Simulo en la copia
                 
-                # <--- CAMBIO: Pasamos 'tablero_ia' como primer argumento al minimax
+                # Minimax evalúa la rama desde la posición simulada.
                 puntuacion_rama = self.minimax(tablero_ia, profundidad_actual, not soy_blancas, alfa, beta) 
                 
-                tablero_ia.pop() # <--- CAMBIO: pop en el clon
+                tablero_ia.pop()  # Deshago la simulación
                 
-                # Guardamos los rayos X solo de la iteración más profunda completada
+                # Guardo los valores para mostrar el ranking de análisis.
                 registro_rayos_x[mov.uci()] = puntuacion_rama
 
                 if soy_blancas:
                     if puntuacion_rama > mejor_valor:
                         mejor_valor = puntuacion_rama
-                        mejores_movimientos_iteracion = [mov] 
-                    alfa = max(alfa, puntuacion_rama)
-                    if puntuacion_rama > 90000:  # Umbral de Jaque Mate
-                        mate_encontrado = True
-                else:
-                    if puntuacion_rama < mejor_valor: 
-                        mejor_valor = puntuacion_rama
-                        mejores_movimientos_iteracion = [mov] 
-                    beta = min(beta, puntuacion_rama)
-                    if puntuacion_rama < -90000: # Umbral de Jaque Mate
-                        mate_encontrado = True
+                        mejores_movimientos_iteracion = [mov]
 
-            # Actualizamos el movimiento definitivo con lo aprendido en esta capa
+                    alfa = max(alfa, puntuacion_rama)
+
+                else:
+                    if puntuacion_rama < mejor_valor:
+                        mejor_valor = puntuacion_rama
+                        mejores_movimientos_iteracion = [mov]
+
+                    beta = min(beta, puntuacion_rama)
+
+            # La mejor jugada de la capa actual pasa a explorarse primero.
             if mejores_movimientos_iteracion:
                 movimiento_final = mejores_movimientos_iteracion[0]
                 movimientos_ordenados.remove(movimiento_final)
                 movimientos_ordenados.insert(0, movimiento_final)
 
-            # EL CORTE ABSOLUTO: Si encontramos el mate, no calculamos profundidades mayores.
-            if mate_encontrado:
-                print(f"\n[CORTOCIRCUITO] Mate inevitable hallado a profundidad {profundidad_actual}. Búsqueda abortada.")
+            UMBRAL_MATE = 90000
+            PROFUNDIDAD_MINIMA_MATE_FORZADO = 3
+
+            if soy_blancas:
+                mate_encontrado = mejor_valor > UMBRAL_MATE
+            else:
+                mate_encontrado = mejor_valor < -UMBRAL_MATE
+
+            # Si se confirma una línea de mate, no tiene sentido seguir bajando más.
+            if mate_encontrado and profundidad_actual >= PROFUNDIDAD_MINIMA_MATE_FORZADO:
+                print(f"\n[INSTINTO ASESINO] Linea de mate detectada en la busqueda. Profundidad analizada: {profundidad_actual}.")
                 break
 
         # =========================================================================
         # 4. EJECUCIÓN DE LA JUGADA DEFINITIVA
         # =========================================================================
         
-        if self.abortar_calculo:  # <--- NUEVO: Filtro de seguridad final
+        if self.abortar_calculo:  # Filtro final antes de tocar el tablero real
             print("\n[MOTOR] Cálculo zombi interceptado y destruido.")
             return False
 
-        # Una vez finalizada toda la búsqueda asíncrona, aplicamos el movimiento 
-        # ganador en el tablero REAL para que se entere la interfaz gráfica.
+        # Aplico en el tablero real la jugada elegida después de la búsqueda.
         self.board.push(movimiento_final) 
         
         print(f"\n[RAYOS X] Ranking de jugadas (Profundidad alcanzada: {profundidad_actual}):")
@@ -505,14 +510,14 @@ class ChessEngine:
         def score_movimiento(mov: chess.Move) -> float:
             puntuacion = 0.0
             
-            # 1. TÁCTICA MVV-LVA Y CAPTURAS
-            if tablero.is_capture(mov): # <--- CAMBIO
-                # Arreglo crítico: Las capturas al paso no tienen pieza en la casilla de destino
-                if tablero.is_en_passant(mov): # <--- CAMBIO
+            # 1. Capturas y criterio MVV-LVA.
+            if tablero.is_capture(mov):
+                # En passant no deja pieza en la casilla destino, por eso lo trato aparte.
+                if tablero.is_en_passant(mov):
                     puntuacion += 10000 
                 else:
-                    pieza_atacada = tablero.piece_at(mov.to_square) # <--- CAMBIO
-                    pieza_atacante = tablero.piece_at(mov.from_square) # <--- CAMBIO
+                    pieza_atacada = tablero.piece_at(mov.to_square)
+                    pieza_atacante = tablero.piece_at(mov.from_square)
                     
                     if pieza_atacada and pieza_atacante:
                         valores = {chess.PAWN: 100, chess.KNIGHT: 300, chess.BISHOP: 300, 
@@ -523,43 +528,41 @@ class ChessEngine:
                         
                         puntuacion += 10000 + valor_victima - valor_atacante
 
-                        # 2. EL INSTINTO "MUERE MATANDO"
-                        if tablero.is_attacked_by(not tablero.turn, mov.from_square): # <--- CAMBIO
+                        # 2. Si la pieza estaba perdida, priorizo que capture algo antes de caer.
+                        if tablero.is_attacked_by(not tablero.turn, mov.from_square):
                             puntuacion += 5000 + (valor_victima * 2)
 
-            # 3. PROMOCIONES DE PEÓN
+            # 3. Promociones.
             if mov.promotion == chess.QUEEN:
                 puntuacion += 9000
                 
-            # 4. JAQUES AL REY (Mates gestionados por Minimax)
-            tablero.push(mov) # <--- CAMBIO
-            # BUG FIX: Eliminamos el is_checkmate() de aquí por rendimiento. 
-            # El is_check() ya asegura que los mates se ordenen arriba.
-            if tablero.is_check(): # <--- CAMBIO
+            # 4. Jaques: los mates completos los termina resolviendo Minimax.
+            tablero.push(mov)
+            # Evito comprobar mate aquí para no penalizar rendimiento.
+            # Con is_check() ya subo estas jugadas en el orden.
+            if tablero.is_check():
                 puntuacion += 2000
-            tablero.pop() # <--- CAMBIO
+            tablero.pop()
             
-            # 5. PENALIZACIÓN DE SEGURIDAD EXTENDIDA
-            pieza_origen = tablero.piece_at(mov.from_square) # <--- CAMBIO
+            # 5. Seguridad de la pieza tras mover.
+            pieza_origen = tablero.piece_at(mov.from_square)
             if pieza_origen:
-                tablero.push(mov) # <--- CAMBIO
-                # Evaluamos si la casilla destino está controlada por el enemigo
-                if tablero.is_attacked_by(tablero.turn, mov.to_square): # <--- CAMBIO
+                tablero.push(mov)
+                # Compruebo si el destino queda controlado por el rival.
+                if tablero.is_attacked_by(tablero.turn, mov.to_square):
                     if pieza_origen.piece_type == chess.QUEEN:
-                        puntuacion -= 8000  # Castigo catastrófico
+                        puntuacion -= 8000  # Perder la dama pesa mucho
                     elif pieza_origen.piece_type in [chess.KNIGHT, chess.BISHOP, chess.ROOK]:
-                        puntuacion -= 1000  # Castigo severo por regalar piezas menores
-                tablero.pop() # <--- CAMBIO
+                        puntuacion -= 1000  # Castigo por dejar una pieza en prise
+                tablero.pop()
 
-            # 6. BONIFICACIÓN DE CENTRALIZACIÓN (Desempate de movimientos silenciosos)
-            # Si el movimiento no es una captura ni un jaque, le damos prioridad
-            # a las piezas que se muevan hacia el centro del tablero.
+            # 6. Centralización como desempate para jugadas tranquilas.
             if puntuacion == 0.0:
                 fila_destino = chess.square_rank(mov.to_square)
                 col_destino = chess.square_file(mov.to_square)
-                # Distancia matemática al centro exacto del tablero (3.5, 3.5)
+                # Distancia al centro geométrico del tablero.
                 distancia_centro = abs(3.5 - col_destino) + abs(3.5 - fila_destino)
-                # Las casillas centrales obtienen más decimales positivos (ej. +0.35)
+                # Más cerca del centro implica una pequeña bonificación.
                 puntuacion += (7.0 - distancia_centro) * 0.05
 
             return puntuacion
@@ -614,11 +617,11 @@ class ChessEngine:
         """
         self.reiniciar_juego()
         
-        # Buscamos la secuencia UCI correspondiente en el diccionario cargado del JSON
+        # Localizo la secuencia UCI asociada al nombre recibido.
         secuencia_uci = self._buscar_secuencia_apertura(nombre_apertura)
                 
         if secuencia_uci and not secuencia_uci.startswith("//"):
-            # Ejecutamos cada movimiento de la secuencia teórica en el tablero
+            # Reproduzco la variante hasta llegar a la posición de inicio.
             for mov_str in secuencia_uci.split():
                 mov = chess.Move.from_uci(mov_str)
                 if mov in self.board.legal_moves:
@@ -641,9 +644,9 @@ class ChessEngine:
         movimientos_teoria = secuencia_uci.split()
         movimientos_jugados = [mov.uci() for mov in self.board.move_stack]
         
-        # Si el jugador ha seguido la teoría perfectamente hasta ahora
+        # Solo hay guía si la partida todavía sigue la teoría.
         if len(movimientos_jugados) < len(movimientos_teoria):
-            # Comprobamos si lo que ya se ha jugado coincide con el inicio de la teoría
+            # Comparo lo jugado con el inicio de la línea teórica.
             es_fiel = True
             for i in range(len(movimientos_jugados)):
                 if movimientos_jugados[i] != movimientos_teoria[i]:
@@ -651,7 +654,7 @@ class ChessEngine:
                     break
             
             if es_fiel:
-                # El siguiente movimiento que toca hacer es este:
+                # Devuelvo el siguiente movimiento previsto por la apertura.
                 return chess.Move.from_uci(movimientos_teoria[len(movimientos_jugados)])
                 
         return None
@@ -662,7 +665,7 @@ class ChessEngine:
         - Si es_manual=False: Va a logs_partidas (rotación de 5).
         - Si es_manual=True: Va a partidas_descargadas (sin límite).
         """
-        # 1. Definimos rutas basadas en el modo
+        # Rutas de salida según sea guardado manual o log automático.
         carpeta_base = "../docs"
         sub_carpeta = "partidas_descargadas" if es_manual else "logs_partidas"
         directorio_final = os.path.join(carpeta_base, sub_carpeta)
@@ -670,7 +673,7 @@ class ChessEngine:
         if not os.path.exists(directorio_final):
             os.makedirs(directorio_final)
 
-        # 2. Construcción del PGN
+        # Cabeceras básicas del archivo PGN.
         juego_pgn = chess.pgn.Game.from_board(self.board)
         juego_pgn.headers["Event"] = "Manual Export" if es_manual else "Auditoría TFG"
         juego_pgn.headers["Date"] = datetime.datetime.now().strftime("%Y.%m.%d")
@@ -678,7 +681,7 @@ class ChessEngine:
         juego_pgn.headers["Black"] = "IA Minimax" if color_humano == chess.WHITE else "Humano"
         juego_pgn.headers["Result"] = resultado_str
 
-        # 3. Guardado
+        # Nombre único para no pisar partidas anteriores.
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         ruta_archivo = os.path.join(directorio_final, f"partida_{timestamp}.pgn")
         
@@ -687,7 +690,7 @@ class ChessEngine:
                 
         print(f"\n[SISTEMA] Partida guardada en: {ruta_archivo}")
 
-        # 4. Rotación SOLO si es log automático
+        # Mantengo solo los últimos logs automáticos.
         if not es_manual:
             archivos_pgn = glob.glob(os.path.join(directorio_final, "*.pgn"))
             archivos_pgn.sort(key=os.path.getctime) 
@@ -704,16 +707,16 @@ class ChessEngine:
         import tkinter as tk
         from tkinter import simpledialog
         
-        # Forzamos que la ventana sea lo único que corra en el hilo principal
+        # Tkinter se usa únicamente para esta ventana puntual.
         root = tk.Tk()
         root.attributes('-topmost', True)
         
-        # Quitamos withdraw() momentáneamente para ver si ayuda a la estabilidad
-        # root.withdraw() 
+        # Dejo withdraw desactivado porque aquí me dio más estabilidad.
+        # root.withdraw()
         
         apertura = simpledialog.askstring("Apertura", "Introduce nombre:")
         root.destroy()
         
-        # Limpieza forzosa del intérprete
+        # Libero la referencia a la ventana antes de salir.
         del root
         return apertura

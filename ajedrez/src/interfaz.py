@@ -1,37 +1,38 @@
+# src/interfaz.py
 import pygame
 import chess
 
-# --- Configuración General ---
+# Parámetros principales de la ventana y del tablero
 ANCHO_TABLERO = 512
 ANCHO_PANEL = 180
-ANCHO = ANCHO_TABLERO + ANCHO_PANEL  # 692 píxeles en total
+ANCHO = ANCHO_TABLERO + ANCHO_PANEL  # tablero y panel lateral
 ALTO = 512
 TAM_CASILLA = ALTO // 8
 MAX_FPS = 15
 DIMENSION = 8
-PIEZAS = {}              # Diccionario para guardar las imágenes cargadas en memoria
-COLOR_HOVER = (0, 150, 255, 80)      # Azul cian semitransparente
-COLOR_ULTIMO_MOV = (255, 255, 0, 80)   # Amarillo semitransparente
-COLOR_JAQUE = (255, 0, 0, 150)         # Rojo intenso translúcido
+PIEZAS = {}              # imágenes de piezas ya preparadas
+COLOR_HOVER = (0, 150, 255, 80)      # hover del ratón
+COLOR_ULTIMO_MOV = (255, 255, 0, 80)   # último movimiento
+COLOR_JAQUE = (255, 0, 0, 150)         # aviso de jaque
 
-# Añade también esta variable global de estado para el cartel de mate
+# Estado sencillo para ocultar el cartel final si hace falta
 ocultar_cartel_final = False
 
 
 
 def cargar_imagenes():
-    """Carga las imágenes de las piezas desde la carpeta 'images' a un diccionario."""
+    """Cargo una vez las imágenes de las piezas y las dejo listas para dibujar."""
     piezas = ['wp', 'wr', 'wn', 'wb', 'wq', 'wk', 'bp', 'br', 'bn', 'bb', 'bq', 'bk']
-    escala = 0.95 # Para que la pieza ocupe el 95% de la casilla y no se vea apretada
+    escala = 0.95 # Dejo un pequeño margen para que las piezas no queden pegadas al borde.
     tam_pieza = int(TAM_CASILLA * escala)
     
     for pieza in piezas:
-        # Cargamos la imagen y la escalamos para que encaje perfectamente
+        # Guardo cada imagen ya escalada para no repetir este trabajo en cada frame.
         imagen = pygame.image.load("images/" + pieza + ".png")
         PIEZAS[pieza] = pygame.transform.scale(imagen, (tam_pieza, tam_pieza))
 
 def dibujar_tablero(pantalla):
-    """Dibuja el patrón cuadriculado del tablero (blanco y gris)."""
+    """Pinta el tablero base con el patrón alterno de casillas."""
     colores = [pygame.Color("white"), pygame.Color("gray")]
     for f in range(DIMENSION):
         for c in range(DIMENSION):
@@ -39,13 +40,13 @@ def dibujar_tablero(pantalla):
             pygame.draw.rect(pantalla, color, pygame.Rect(c*TAM_CASILLA, f*TAM_CASILLA, TAM_CASILLA, TAM_CASILLA))
 
 def dibujar_piezas(pantalla, board, color_humano=chess.WHITE):
-    """ Dibuja las piezas orientadas según el color del jugador. """
+    """Coloca las piezas respetando la orientación elegida por el jugador."""
     for casilla in chess.SQUARES:
         pieza = board.piece_at(casilla)
         if pieza is not None:
             nombre_pieza = f"{'w' if pieza.color == chess.WHITE else 'b'}{pieza.symbol().lower()}"
             
-            # MATEMÁTICA DE ESPEJO: Si jugamos con negras, invertimos filas y columnas
+            # Si el jugador va con negras, dibujo el tablero desde su perspectiva.
             if color_humano == chess.WHITE:
                 fil = 7 - chess.square_rank(casilla)
                 col = chess.square_file(casilla)
@@ -57,15 +58,15 @@ def dibujar_piezas(pantalla, board, color_humano=chess.WHITE):
             pantalla.blit(PIEZAS[nombre_pieza], (col * TAM_CASILLA + offset, fil * TAM_CASILLA + offset))
 
 def resaltar_casillas(pantalla, casilla_seleccionada, movimientos_validos, color_humano=chess.WHITE):
-    """ Resalta la casilla seleccionada y los posibles destinos adaptando la perspectiva. """
+    """Marca la pieza seleccionada y los destinos legales desde la vista actual."""
     superficie = pygame.Surface((TAM_CASILLA, TAM_CASILLA), pygame.SRCALPHA)
     
     if casilla_seleccionada:
         f, c = casilla_seleccionada
-        superficie.fill((255, 255, 0, 100)) # Amarillo transparente
+        superficie.fill((255, 255, 0, 100)) # pieza seleccionada
         pantalla.blit(superficie, (c * TAM_CASILLA, f * TAM_CASILLA))
         
-        superficie.fill((0, 255, 0, 100)) # Verde para movimientos válidos
+        superficie.fill((0, 255, 0, 100)) # posibles destinos
         for mov in movimientos_validos:
             if color_humano == chess.WHITE:
                 f_dest = 7 - chess.square_rank(mov.to_square)
@@ -77,10 +78,10 @@ def resaltar_casillas(pantalla, casilla_seleccionada, movimientos_validos, color
 
 def mostrar_mensaje_final(pantalla, texto):
     """
-    Dibuja un cartel rectangular semi-transparente con el resultado
-    y las instrucciones para reiniciar.
+    Muestra el resultado de la partida en un cartel sencillo.
+    También dejo visible la tecla de reinicio para no tener que cerrar la ventana.
     """
-    # 1. Hacemos el banner un poco más alto (120px) para que quepan dos líneas
+    # Banner centrado para mostrar el resultado sin tapar toda la partida.
     banner = pygame.Surface((ANCHO, 120))
     banner.set_alpha(200) 
     banner.fill(pygame.Color("black"))
@@ -88,13 +89,13 @@ def mostrar_mensaje_final(pantalla, texto):
 
     pygame.font.init()
     
-    # 2. Texto principal (El resultado)
+    # Resultado principal.
     fuente_principal = pygame.font.SysFont("Arial", 28, bold=True)
     superficie_texto = fuente_principal.render(texto, True, pygame.Color("white"))
     texto_rect = superficie_texto.get_rect(center=(ANCHO // 2, ALTO // 2 - 15))
     pantalla.blit(superficie_texto, texto_rect)
 
-    # 3. Texto secundario (Instrucciones de reinicio)
+    # Pequeña ayuda para reiniciar.
     fuente_secundaria = pygame.font.SysFont("Arial", 18)
     superficie_reinicio = fuente_secundaria.render("Pulsa 'R' para reiniciar", True, pygame.Color("lightgray"))
     reinicio_rect = superficie_reinicio.get_rect(center=(ANCHO // 2, ALTO // 2 + 25))
@@ -102,19 +103,19 @@ def mostrar_mensaje_final(pantalla, texto):
 
 def dibujar_barra_estado(pantalla, texto, es_final=False):
     """
-    Dibuja una franja informativa. Si es_final es True, adopta un tono 
-    dorado elegante para mostrar el resultado permanente.
+    Dibuja la franja inferior de información.
+    La uso tanto para la teoría detectada como para el resultado final.
     """
     import pygame
     
-    # Dorado apagado (184, 134, 11) para el final, Gris oscuro durante la partida
+    # Cambio el color cuando la partida ya ha terminado.
     color_fondo = (184, 134, 11) if es_final else pygame.Color("darkslategray")
     pygame.draw.rect(pantalla, color_fondo, pygame.Rect(0, ALTO, ANCHO, 40))
     
     pygame.font.init()
     fuente = pygame.font.SysFont("Arial", 15, bold=True)
     
-    # Formateamos el texto dependiendo del estado de la partida
+    # Durante la partida muestro la teoría; al final, solo el resultado.
     texto_mostrar = texto if es_final else f"Teoría: {texto}"
     
     superficie_texto = fuente.render(texto_mostrar, True, pygame.Color("white"))
@@ -123,7 +124,7 @@ def dibujar_barra_estado(pantalla, texto, es_final=False):
     pantalla.blit(superficie_texto, texto_rect)
 
 def resaltar_guia_teorica(pantalla, movimiento_guia, color_humano=chess.WHITE):
-    """ Dibuja la guía azul invertida si somos las negras. """
+    """Resalta el movimiento sugerido por la apertura guiada."""
     if movimiento_guia is not None:
         casilla_origen = movimiento_guia.from_square
         casilla_destino = movimiento_guia.to_square
@@ -141,9 +142,8 @@ def resaltar_guia_teorica(pantalla, movimiento_guia, color_humano=chess.WHITE):
 
 def pantalla_seleccion_color(pantalla, reloj, ancho, alto):
     """
-    Pantalla inicial sobria para configurar la partida.
-    Permite elegir color y escribir o pegar una apertura.
-    Devuelve: (color_elegido, nombre_apertura)
+    Pantalla inicial para preparar la partida.
+    Desde aquí se elige el color, una apertura opcional y el modo guiado.
     """
     import pygame
     import chess
@@ -151,7 +151,7 @@ def pantalla_seleccion_color(pantalla, reloj, ancho, alto):
 
     pygame.font.init()
 
-    # Fuentes normales, sin estilo exagerado
+    # Fuentes sencillas para una pantalla de inicio limpia.
     fuente_titulo = pygame.font.SysFont("Arial", 30, bold=True)
     fuente_subtitulo = pygame.font.SysFont("Arial", 15)
     fuente_btn = pygame.font.SysFont("Arial", 19, bold=True)
@@ -159,7 +159,7 @@ def pantalla_seleccion_color(pantalla, reloj, ancho, alto):
     fuente_input = pygame.font.SysFont("Arial", 15)
     fuente_ayuda = pygame.font.SysFont("Arial", 12)
 
-    # Paleta parecida a una app de escritorio
+    # Paleta oscura y sobria, pensada para no distraer.
     fondo = (34, 34, 31)
     panel = (43, 42, 38)
     panel_borde = (78, 75, 68)
@@ -171,7 +171,7 @@ def pantalla_seleccion_color(pantalla, reloj, ancho, alto):
     oscuro = (24, 24, 22)
     verde = (118, 150, 86)
 
-    # Layout más compacto
+    # Distribución compacta del panel inicial.
     panel_rect = pygame.Rect(0, 0, 560, 330)
     panel_rect.center = (ancho // 2, alto // 2)
 
@@ -232,14 +232,14 @@ def pantalla_seleccion_color(pantalla, reloj, ancho, alto):
                 elif e.unicode:
                     texto_apertura += e.unicode
 
-        # Fondo liso, sin patrón llamativo
+        # Fondo general.
         pantalla.fill(fondo)
 
-        # Panel principal
+        # Caja principal.
         pygame.draw.rect(pantalla, panel, panel_rect)
         pygame.draw.rect(pantalla, panel_borde, panel_rect, 2)
 
-        # Cabecera
+        # Título y descripción.
         titulo = fuente_titulo.render("Nueva partida", True, texto)
         pantalla.blit(titulo, (margen_x, panel_rect.y + 34))
 
@@ -250,7 +250,7 @@ def pantalla_seleccion_color(pantalla, reloj, ancho, alto):
         )
         pantalla.blit(subtitulo, (margen_x, panel_rect.y + 70))
 
-        # Botón blancas
+        # Elección de blancas.
         hover_b = btn_blancas.collidepoint(mouse)
         pygame.draw.rect(
             pantalla,
@@ -268,7 +268,7 @@ def pantalla_seleccion_color(pantalla, reloj, ancho, alto):
             )
         )
 
-        # Botón negras
+        # Elección de negras.
         hover_n = btn_negras.collidepoint(mouse)
         pygame.draw.rect(
             pantalla,
@@ -286,7 +286,7 @@ def pantalla_seleccion_color(pantalla, reloj, ancho, alto):
             )
         )
 
-        # Separador
+        # Separación entre color y apertura.
         pygame.draw.line(
             pantalla,
             (75, 72, 66),
@@ -294,7 +294,7 @@ def pantalla_seleccion_color(pantalla, reloj, ancho, alto):
             (panel_rect.right - 48, panel_rect.y + 180)
         )
 
-        # Campo de apertura
+        # Entrada para escribir o pegar una apertura.
         label = fuente_label.render("Apertura a entrenar", True, texto)
         pantalla.blit(label, (margen_x, panel_rect.y + 194))
 
@@ -334,7 +334,7 @@ def pantalla_seleccion_color(pantalla, reloj, ancho, alto):
         )
         pantalla.blit(ayuda, (margen_x, input_rect.bottom + 10))
 
-        # Check: apertura guiada
+        # Opción para entrenar la apertura paso a paso.
         pygame.draw.rect(pantalla, (28, 28, 26), check_guiada_rect)
         pygame.draw.rect(
             pantalla,
@@ -366,13 +366,13 @@ def pantalla_seleccion_color(pantalla, reloj, ancho, alto):
 
 def dibujar_coordenadas(pantalla, color_humano):
     """
-    Dibuja los indicadores de fila (1-8) y columna (a-h) en los bordes del tablero.
-    La perspectiva se invierte automáticamente si el jugador humano lleva las negras.
+    Dibuja las coordenadas del tablero.
+    El orden cambia si el jugador ve la partida desde el lado de negras.
     """
-    # Usamos una fuente pequeña y legible
+    # Fuente pequeña para que las coordenadas no molesten.
     fuente = pygame.font.SysFont("Helvetica", 14, bold=True)
     
-    # 1. Definimos el orden lógico según la perspectiva del jugador
+    # Orden de coordenadas según la perspectiva.
     if color_humano == chess.WHITE:
         filas = ['8', '7', '6', '5', '4', '3', '2', '1']
         columnas = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h']
@@ -381,31 +381,31 @@ def dibujar_coordenadas(pantalla, color_humano):
         columnas = ['h', 'g', 'f', 'e', 'd', 'c', 'b', 'a']
         
     for i in range(8):
-        # Para que el texto se lea bien, puedes ajustar este color (ej. un gris oscuro o claro)
-        # según la paleta de colores que estés usando para tus casillas.
+        # Color discreto para que se lea sin destacar demasiado.
+
         color_texto = (40, 40, 40) 
         
-        # Dibujar NÚMEROS (Eje Y)
-        # Se pintan en el margen izquierdo (columna 0) de cada fila
+        # Números de las filas.
+
         texto_fila = fuente.render(filas[i], True, color_texto)
-        # X=5 para un pequeño margen, Y depende de la iteración
+
         pantalla.blit(texto_fila, (5, i * TAM_CASILLA + 5))
         
-        # Dibujar LETRAS (Eje X)
-        # Se pintan en el margen inferior (fila 7) de cada columna
+        # Letras de las columnas.
+
         texto_col = fuente.render(columnas[i], True, color_texto)
-        # X depende de la iteración (casi al final de la casilla), Y pegado al fondo
+
         pantalla.blit(texto_col, (i * TAM_CASILLA + TAM_CASILLA - 15, 8 * TAM_CASILLA - 20))
 
 def dibujar_efectos_visuales(pantalla, tablero, tamano_casilla, color_humano):
     """
-    Dibuja los resaltados dinámicos (último movimiento, jaque y hover del ratón).
-    Recibe una copia estática del tablero (tablero_visual) para evitar el ruido del hilo de la IA.
+    Dibuja los efectos dinámicos del tablero: último movimiento, jaque y hover.
+    Trabajo sobre una copia visual para que la IA no interfiera con el dibujado.
     """
     import pygame
     import chess
     
-    # 1. Resaltar el último movimiento realizado (Origen y Destino)
+    # Último movimiento realizado.
     if tablero.move_stack:
         ultimo_mov = tablero.peek()
         
@@ -424,7 +424,7 @@ def dibujar_efectos_visuales(pantalla, tablero, tamano_casilla, color_humano):
             superficie_mov.fill(COLOR_ULTIMO_MOV) 
             pantalla.blit(superficie_mov, (col_pantalla * tamano_casilla, fila_pantalla * tamano_casilla))
 
-    # 2. Iluminar en rojo al Rey si está en Jaque (Efecto Resplandor)
+    # Aviso visual cuando el rey está en jaque.
     if tablero.is_check():
         rey_sq = tablero.king(tablero.turn)
         if rey_sq is not None:
@@ -448,7 +448,7 @@ def dibujar_efectos_visuales(pantalla, tablero, tamano_casilla, color_humano):
                 
             pantalla.blit(superficie_jaque, (col_pantalla * tamano_casilla, fila_pantalla * tamano_casilla))
 
-    # 3. Hover del ratón sobre el tablero
+    # Casilla sobre la que está el ratón.
     x_raton, y_raton = pygame.mouse.get_pos()
     if 0 <= x_raton < 8 * tamano_casilla and 0 <= y_raton < 8 * tamano_casilla:
         col_hover = x_raton // tamano_casilla
@@ -460,8 +460,8 @@ def dibujar_efectos_visuales(pantalla, tablero, tamano_casilla, color_humano):
 
 def dibujar_foco_teatral(pantalla, tablero, tamano_casilla, color_humano):
     """
-    Oscurece el tablero suavemente y aplica un resplandor radial (foco de luz)
-    exclusivamente sobre el rey que recibe el mate y las piezas atacantes.
+    Aplica un efecto visual de final de partida.
+    Oscurezco el tablero y destaco el rey en mate junto a las piezas que atacan.
     """
     import pygame
     import chess
@@ -469,23 +469,23 @@ def dibujar_foco_teatral(pantalla, tablero, tamano_casilla, color_humano):
     if not tablero.is_checkmate():
         return
 
-    # 1. Aplicar sombra global suave a todo el tablero
-    # Usamos opacidad 80 en lugar de 150 para que el resto del tablero se siga viendo bien
+    # Sombra suave para centrar la atención en el mate.
+    # Mantengo el tablero visible, aunque quede en segundo plano.
     sombra_global = pygame.Surface((8 * tamano_casilla, 8 * tamano_casilla), pygame.SRCALPHA)
     sombra_global.fill((0, 0, 0, 80)) 
     pantalla.blit(sombra_global, (0, 0))
 
-    # Obtenemos las casillas protagonistas
+    # Rey en mate y piezas que están dando jaque.
     rey_sq = tablero.king(tablero.turn)
     atacantes = tablero.checkers()
     protagonistas = [rey_sq] + list(atacantes)
 
-    # 2. Iluminar y redibujar a los protagonistas
+    # Dibujo un pequeño foco sobre cada pieza importante.
     for cas in protagonistas:
         col_math = chess.square_file(cas)
         fila_math = chess.square_rank(cas)
 
-        # Adaptamos la perspectiva
+        # Paso de coordenadas de ajedrez a coordenadas de pantalla.
         if color_humano == chess.WHITE:
             fila_pantalla = 7 - fila_math
             col_pantalla = col_math
@@ -496,22 +496,22 @@ def dibujar_foco_teatral(pantalla, tablero, tamano_casilla, color_humano):
         coord_x = col_pantalla * tamano_casilla
         coord_y = fila_pantalla * tamano_casilla
 
-        # A. Crear el resplandor radial (Foco de luz)
+        # Resplandor radial de la casilla.
         superficie_luz = pygame.Surface((tamano_casilla, tamano_casilla), pygame.SRCALPHA)
         centro = (tamano_casilla // 2, tamano_casilla // 2)
         radio_max = tamano_casilla // 2
 
-        # Dibujamos anillos concéntricos hacia adentro para crear el difuminado
+        # Anillos concéntricos para crear el difuminado.
         for radio in range(radio_max, 0, -2):
-            # El centro es muy luminoso (alfa 150), los bordes desaparecen (alfa 0)
+            # El centro queda más marcado y los bordes se suavizan.
             alfa = int(150 * (1 - (radio / radio_max))) 
-            # width=2 evita que los círculos se superpongan y saturen el canal alfa
+            # Evito saturar la transparencia superponiendo demasiado.
             pygame.draw.circle(superficie_luz, (255, 255, 255, alfa), centro, radio, 2)
         
         pantalla.blit(superficie_luz, (coord_x, coord_y))
 
-        # B. Redibujar la pieza original encima de la luz
-        # Como está en interfaz.py, podemos acceder al diccionario PIEZAS directamente
+        # Redibujo la pieza para que no quede oscurecida.
+
         pieza = tablero.piece_at(cas)
         if pieza:
             nombre_pieza = f"{'w' if pieza.color == chess.WHITE else 'b'}{pieza.symbol().lower()}"
@@ -520,17 +520,17 @@ def dibujar_foco_teatral(pantalla, tablero, tamano_casilla, color_humano):
 
 def dibujar_panel_lateral(pantalla, tablero, color_humano):
     """
-    Dibuja el panel derecho con el recuento de material agrupado en la parte superior.
+    Dibuja el panel lateral con material capturado y ventaja de piezas.
     """
     import pygame
     import chess
     
-    # 1. Fondo TOTAL del panel. ¡Esto borra la basura visual del frame anterior!
+    # Limpio el panel completo en cada frame.
     rect_panel = pygame.Rect(ANCHO_TABLERO, 0, ANCHO_PANEL, ALTO)
-    pygame.draw.rect(pantalla, (38, 36, 33), rect_panel) # Tono gris/marrón estilo chess.com
+    pygame.draw.rect(pantalla, (38, 36, 33), rect_panel) # fondo del panel
     pygame.draw.line(pantalla, (60, 60, 60), (ANCHO_TABLERO, 0), (ANCHO_TABLERO, ALTO), 2)
     
-    # 2. Configuración de conteo
+    # Recuento básico de material.
     piezas_iniciales = {chess.PAWN: 8, chess.KNIGHT: 2, chess.BISHOP: 2, chess.ROOK: 2, chess.QUEEN: 1}
     valores = {chess.PAWN: 1, chess.KNIGHT: 3, chess.BISHOP: 3, chess.ROOK: 5, chess.QUEEN: 9}
     
@@ -574,25 +574,25 @@ def dibujar_panel_lateral(pantalla, tablero, color_humano):
             
         for miniatura in piezas_array:
             if x_actual > ANCHO - 25: 
-                x_actual = ANCHO_TABLERO + 45 # Sangría si hay doble línea
+                x_actual = ANCHO_TABLERO + 45 # segunda línea si no caben más piezas
                 y_inicio += 20
             
             clave = miniatura[0].lower() + miniatura[1].lower()
             if clave in PIEZAS:
-                # Aumentamos el tamaño a 32x32 y subimos un poco la Y (-6) para centrar
+                # Miniaturas algo más grandes para que se vean claras.
                 img_mini = pygame.transform.smoothscale(PIEZAS[clave], (32, 32))
                 pantalla.blit(img_mini, (x_actual, y_inicio - 6))
             
-            x_actual += 12 # Separamos un par de píxeles más para compensar el tamaño
+            x_actual += 12 # separación entre miniaturas
 
-    # ¡Ambas barras juntas en la zona superior!
+    # Dejo el material capturado agrupado arriba.
     renderizar_bloque(piezas_top, texto_ventaja_top, y_inicio=20)
     renderizar_bloque(piezas_bot, texto_ventaja_bot, y_inicio=60)
 
 def dibujar_historial_movimientos(pantalla, tablero_real, offset_visual, y_inicio=110):
     """
-    Historial que sigue la jugada seleccionada en verde.
-    Las flechas de navegación ahora están ancladas de forma relativa debajo de la tabla.
+    Muestra el historial de la partida y resalta la jugada observada.
+    También devuelve los botones de navegación por si se quiere revisar la partida.
     """
     import pygame
     import chess
@@ -602,7 +602,7 @@ def dibujar_historial_movimientos(pantalla, tablero_real, offset_visual, y_inici
     fuente_num = pygame.font.SysFont("Helvetica", 14)
     x_base = ANCHO_TABLERO
     
-    # Fondo del historial
+    # Zona del historial de movimientos.
     pygame.draw.rect(pantalla, (30, 28, 25), (x_base, y_inicio, ANCHO_PANEL, ALTO - y_inicio))
     pygame.draw.line(pantalla, (50, 50, 50), (x_base, y_inicio), (ANCHO, y_inicio), 2)
 
@@ -654,7 +654,7 @@ def dibujar_historial_movimientos(pantalla, tablero_real, offset_visual, y_inici
             pantalla.blit(fuente_texto.render(mov_n, True, (240, 240, 240)), (x_base + 115, y_actual + 5))
         y_actual += alto_fila
 
-    # Botones de flechas fijados matemáticamente debajo de las 6 líneas
+    # Flechas de navegación bajo las líneas visibles.
     y_botones = y_inicio + (max_lineas * alto_fila) + 15
     rect_izq = pygame.Rect(x_base + 25, y_botones, 55, 30)
     rect_der = pygame.Rect(x_base + 100, y_botones, 55, 30)
@@ -674,20 +674,20 @@ def dibujar_historial_movimientos(pantalla, tablero_real, offset_visual, y_inici
 
 def dibujar_botones_admin(pantalla, apertura_actual, y_inicio=340):
     """
-    Dibuja los botones en la base del panel, separados del historial.
+    Dibuja los botones auxiliares del panel lateral.
     """
     import pygame
     pygame.font.init()
     fuente = pygame.font.SysFont("Helvetica", 12, bold=True)
     x_base = ANCHO_TABLERO + 15
 
-    # 1. Botón Guardar PGN (Fijado en y=340)
+    # Botón para exportar la partida.
     rect_pgn = pygame.Rect(x_base, y_inicio, 150, 30)
     pygame.draw.rect(pantalla, (60, 60, 60), rect_pgn, border_radius=4)
     texto_pgn = fuente.render("Descargar PGN", True, (240, 240, 240))
     pantalla.blit(texto_pgn, (x_base + 32, y_inicio + 8))
 
-    # 2. Botón Apertura (Desplazado matemáticamente hacia abajo)
+    # Botón de apertura actual o selección de apertura.
     y_btn_2 = y_inicio + 40
     rect_ap = pygame.Rect(x_base, y_btn_2, 150, 30)
     color_ap = (86, 126, 58) if apertura_actual else (60, 60, 60)
@@ -704,15 +704,15 @@ def dibujar_botones_admin(pantalla, apertura_actual, y_inicio=340):
 
 def leer_texto_portapapeles():
     """
-    Lee texto del portapapeles en Windows sin usar tkinter.
-    Evita errores Tcl_AsyncDelete al combinar Pygame con hilos.
+    Lee texto del portapapeles sin depender de tkinter.
+    Lo hago así porque Pygame e hilos pueden dar problemas con ese módulo.
     """
     import ctypes
     import pygame
 
     texto = ""
 
-    # 1. Método principal en Windows: WinAPI
+    # Primero pruebo con WinAPI, que en Windows es lo más estable.
     try:
         CF_UNICODETEXT = 13
         user32 = ctypes.windll.user32
@@ -734,7 +734,7 @@ def leer_texto_portapapeles():
     except Exception:
         texto = ""
 
-    # 2. Respaldo: pygame.scrap
+    # Si lo anterior falla, uso el portapapeles de Pygame como respaldo.
     if not texto:
         try:
             if not pygame.scrap.get_init():
@@ -758,9 +758,8 @@ def leer_texto_portapapeles():
 
 def limpiar_texto_pegado(texto):
     """
-    Limpia el texto pegado en el input de apertura.
-    Si se copia una línea completa del JSON, extrae el nombre de la apertura.
-    Si se copia un nombre con dos puntos, lo respeta entero.
+    Limpia el texto pegado en el campo de apertura.
+    Si viene una línea completa del JSON, me quedo solo con el nombre visible.
     """
     import json
     import re
@@ -774,7 +773,7 @@ def limpiar_texto_pegado(texto):
 
     texto_sin_coma = texto.rstrip(",")
 
-    # Solo interpretamos como línea JSON si empieza por una clave entre comillas.
+    # Detecto el caso de una línea completa del JSON.
     # Ejemplo:
     # "e2e4 c7c5": "Defensa Siciliana",
     if re.match(r'^\s*"[^"]+"\s*:\s*', texto_sin_coma):
@@ -795,7 +794,7 @@ def limpiar_texto_pegado(texto):
             except Exception:
                 return coincidencia.group(1).strip()
 
-    # Si se copia solo el valor entre comillas:
+    # También acepto que se copie solo el nombre.
     # "Dragón: Ataque Yugoslavo"
     if len(texto_sin_coma) >= 2 and texto_sin_coma[0] == '"' and texto_sin_coma[-1] == '"':
         try:
@@ -810,8 +809,8 @@ def limpiar_texto_pegado(texto):
 
 def dibujar_texto_recortado(pantalla, texto, fuente, color, rect, padding=10, mostrar_cursor=False):
     """
-    Dibuja texto dentro de un rectángulo sin limitar caracteres.
-    Si el texto es largo, se muestra la parte final, como en un input profesional.
+    Dibuja texto dentro de un rectángulo manteniendo visible la parte final.
+    Me sirve para inputs largos sin cortar realmente el contenido.
     """
     import pygame
 
@@ -834,8 +833,8 @@ def dibujar_texto_recortado(pantalla, texto, fuente, color, rect, padding=10, mo
 
 def dibujar_editor_apertura(pantalla, texto_apertura, y_inicio=420):
     """
-    Dibuja un editor compacto de apertura dentro del panel lateral.
-    No limita caracteres: muestra la parte final del texto si es muy largo.
+    Dibuja el editor pequeño de apertura dentro del panel lateral.
+    Sigue permitiendo textos largos, mostrando la parte más reciente.
     """
     import pygame
 
